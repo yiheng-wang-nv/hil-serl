@@ -23,10 +23,12 @@ serl_robot_infra/robot_servers/franka_server.py.
 """
 from __future__ import annotations
 
+import os
 import argparse
 import threading
 import time
 from dataclasses import dataclass, field
+from copy import deepcopy
 from typing import Dict, List, Optional
 
 from flask import Flask, jsonify, request
@@ -91,7 +93,9 @@ class G1ArmBridge:
 
         # Initialise DDS factory (0: robot, 1: simulation, same convention as SDK2)
         ChannelFactoryInitialize(1 if simulation_mode else 0)
-        ChannelConfigAutoDetermine()  # ensures interface detection matches SDK2 scripts
+        # Autodetermine network interface unless the environment already specifies one.
+        if "CYCLONEDDS_URI" not in os.environ:
+            os.environ["CYCLONEDDS_URI"] = ChannelConfigAutoDetermine
 
         lowcmd_topic = LOWCMD_TOPIC if use_motion_topic else "rt/lowcmd"
         self._publisher = ChannelPublisher(lowcmd_topic, HgLowCmd)
@@ -194,7 +198,7 @@ class G1ArmBridge:
         while not self._terminated.is_set():
             start = time.time()
             with self._msg_lock:
-                msg = unitree_hg_msg_dds__LowCmd_(**self._command_msg.__dict__)
+                msg = deepcopy(self._command_msg)
             self._publisher.Write(msg)
             elapsed = time.time() - start
             sleep_time = self._publish_period - elapsed
@@ -278,4 +282,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
