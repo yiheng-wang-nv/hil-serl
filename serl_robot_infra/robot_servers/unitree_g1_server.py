@@ -27,6 +27,7 @@ import os
 import argparse
 import threading
 import time
+import logging
 from dataclasses import dataclass, field
 from copy import deepcopy
 from typing import Dict, List, Optional
@@ -57,6 +58,9 @@ LOWCMD_TOPIC = "rt/arm_sdk"
 LOWSTATE_TOPIC = "rt/lowstate"
 
 
+logger = logging.getLogger(__name__)
+
+
 @dataclass
 class JointStateSnapshot:
     """Simple structure for the latest DDS low state."""
@@ -64,6 +68,7 @@ class JointStateSnapshot:
     position: List[float] = field(default_factory=list)
     velocity: List[float] = field(default_factory=list)
     timestamp: float = 0.0
+    mode_machine: int = 0
 
 
 class G1ArmBridge:
@@ -122,7 +127,10 @@ class G1ArmBridge:
             timestamp=time.time(),
         )
 
+        self._update_crc()
+
         # Start threads
+        self._initial_state_ready = threading.Event()
         self._state_thread = threading.Thread(
             target=self._state_loop, name="g1_state_loop", daemon=True
         )
@@ -132,6 +140,12 @@ class G1ArmBridge:
             target=self._publish_loop, name="g1_publish_loop", daemon=True
         )
         self._publish_thread.start()
+
+        if not self._initial_state_ready.wait(timeout=5.0):
+            logger.warning("Timeout waiting for initial DDS state; mode_machine left at default.")
+        else:
+            self._command_msg.mode_machine = self._latest_state.mode_machine
+            self._update_crc()
 
     def shutdown(self):
         self._terminated.set()
@@ -158,6 +172,8 @@ class G1ArmBridge:
                     self._latest_state.position[idx] = motor.q
                     self._latest_state.velocity[idx] = motor.dq
                 self._latest_state.timestamp = time.time()
+                self._latest_state.mode_machine = msg.mode_machine
+            self._initial_state_ready.set()
 
     # ------------------------------------------------------------------- command
     def set_arm_joint_targets(self, target: List[float]):
@@ -206,8 +222,7 @@ class G1ArmBridge:
                 time.sleep(sleep_time)
 
     def _update_crc(self):
-        # Compute CRC over serialized command (same helper as xr_teleoperate uses).
-        self._command_msg.crc = self._crc.calculate_crc32(self._command_msg)
+        self._command_msg.crc = self._crc.Crc(self._command_msg)
 
 
 # ------------------------------------------------------------------------------

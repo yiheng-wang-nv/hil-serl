@@ -70,17 +70,41 @@ stack.  The goal is to provide a quick end-to-end smoke test:
 
 ## Quick validation workflow
 
-0. {Optional} source `CYCLONEDDS_URI` as described above if autodetection does not work.
+0. {Optional} source `CYCLONEDDS_URI` as described above if autodetection does not work. When you are running the Unitree official simulator on the same machine you can use the loopback interface:
+   ```bash
+   export CYCLONEDDS_URI='<?xml version="1.0" encoding="UTF-8"?>
+   <CycloneDDS>
+     <Domain>
+       <General>
+         <Interfaces>
+           <NetworkInterface name="lo" />
+         </Interfaces>
+       </General>
+     </Domain>
+   </CycloneDDS>'
+   ```
 
-1. Launch the DDS bridge (replace `enp3s0` with your interface if needed):
+1. Launch the Unitree simulator. Wait for the log line `DDS communication initialized`.
+  ```bash
+  conda activate unitree_sim_env
+  cd /home/nvidia/workspace/yiheng/unitree_sim_isaaclab
+  python sim_main.py --device cpu --enable_cameras --task Isaac-Simple-Wave-G129-Dex3-Joint --enable_dex3_dds --robot_type g129
+  ```
 
+2. Sanity-check the DDS stream with the SDK2 example (replace `lo` with your real interface):
+   ```bash
+   cd /localhome/local-vennw/code/unitree_sdk2_python
+   python example/g1/lowlevel/g1_low_level_example.py lo
+   ```
+   If this script prints joint/imu data, the simulator is broadcasting `rt/lowstate`.
+
+3. Start the bridge server in a new terminal:
    ```bash
    conda activate hilserl
    python -m serl_robot_infra.robot_servers.unitree_g1_server --simulation --port 6000
    ```
 
-2. In a second terminal run a sanity script:
-
+4. Run the minimal environment test:
    ```python
    from serl_robot_infra.unitree_env import UnitreeG1ArmEnv
    import numpy as np
@@ -92,9 +116,9 @@ stack.  The goal is to provide a quick end-to-end smoke test:
    env.close()
    ```
 
-3. Watch the console output of the server and verify that joints remain
-   responsive.  Add small non-zero values to `action` to confirm motion if the
-   hardware is connected.
+5. Watch the server console output and the simulator:
+   - If DDS is flowing, `/getstate` will return live joint data.
+   - Try small non-zero entries in `action` to check that the simulated arm responds.
 
 ## Troubleshooting
 
