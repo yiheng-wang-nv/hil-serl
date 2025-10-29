@@ -24,3 +24,9 @@ pip install --upgrade "jax[cuda12_pip]==0.4.35" -i https://pypi.tuna.tsinghua.ed
 cd unitree_sdk2_python
 pip install -e .
 ```
+
+5. **Install other dependencies**
+
+```bash
+pip install flask
+```
