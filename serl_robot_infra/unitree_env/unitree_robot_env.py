@@ -60,34 +60,10 @@ class UnitreeG1DirectEnv(gym.Env):
         super().__init__()
 
         # Expect unitree_lerobot to be importable; rely on environment setup.
-
-        # Ensure Pinocchio can resolve URDF/mesh paths shipped with unitree_lerobot.
-        import importlib
-
-        unitree_module = importlib.import_module("unitree_lerobot")
-        module_file = getattr(unitree_module, "__file__", None)
-        if module_file:
-            module_root = os.path.dirname(module_file)
-        else:
-            locations = getattr(unitree_module, "__path__", [])
-            module_root = locations[0] if locations else ""
-        if not module_root:
-            raise RuntimeError("Could not determine unitree_lerobot installation path.")
-        ros_pkg_path = os.environ.get("ROS_PACKAGE_PATH", "")
-        paths = [p for p in ros_pkg_path.split(os.pathsep) if p]
-        if module_root not in paths:
-            paths.append(module_root)
-            os.environ["ROS_PACKAGE_PATH"] = os.pathsep.join(paths)
-
         from unitree_lerobot.eval_robot.make_robot import setup_robot_interface
 
         args = SimpleNamespace(arm=arm, ee=ee, motion=motion_mode, sim=simulation)
-        cwd = os.getcwd()
-        try:
-            os.chdir(module_root)
-            robot_if = setup_robot_interface(args)
-        finally:
-            os.chdir(cwd)
+        robot_if = setup_robot_interface(args)
 
         self._arm_ctrl = robot_if["arm_ctrl"]
         self._arm_ik = robot_if["arm_ik"]
