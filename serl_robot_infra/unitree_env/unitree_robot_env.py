@@ -82,7 +82,12 @@ class UnitreeG1DirectEnv(gym.Env):
         from unitree_lerobot.eval_robot.make_robot import setup_robot_interface
 
         args = SimpleNamespace(arm=arm, ee=ee, motion=motion_mode, sim=simulation)
-        robot_if = setup_robot_interface(args)
+        cwd = os.getcwd()
+        try:
+            os.chdir(module_root)
+            robot_if = setup_robot_interface(args)
+        finally:
+            os.chdir(cwd)
 
         self._arm_ctrl = robot_if["arm_ctrl"]
         self._arm_ik = robot_if["arm_ik"]
