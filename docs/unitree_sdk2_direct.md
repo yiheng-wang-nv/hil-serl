@@ -108,14 +108,6 @@ This means the environment behaves the same way as the deployment stack (e.g.
 `unitree_lerobot/eval_robot/eval_g1_gr00t.py`), so policies trained in HIL-SERL
 will see the same control semantics as at evaluation time.
 
-## Optional: legacy HTTP bridge
-
-The former HTTP bridge (`UnitreeG1ArmEnv` + `unitree_g1_server.py`) is still
-available for lightweight experiments or when the official stack is
-unavailable.  That setup only exercises arm joints and produces mock hand
-commands; the direct environment described above should be preferred for any
-serious training or evaluation.
-
 ## Next steps
 
 * Integrate the new environment into the `examples/experiments` pipeline by

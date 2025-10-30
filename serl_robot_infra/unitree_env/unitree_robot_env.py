@@ -20,8 +20,7 @@ are therefore reported as zeros).
 
 Prerequisites:
     - ``unitree_sdk2_python`` installed in the active environment.
-    - ``unitree_lerobot`` repository available on ``PYTHONPATH`` or the user
-      supplies ``unitree_repo_root`` when constructing the environment.
+    - ``unitree_lerobot`` (already installed in the Python environment).
 """
 from __future__ import annotations
 
@@ -30,7 +29,7 @@ import sys
 import time
 from dataclasses import dataclass
 from types import SimpleNamespace
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional
 
 import gymnasium as gym
 import numpy as np
@@ -49,7 +48,6 @@ class UnitreeG1DirectEnv(gym.Env):
     def __init__(
         self,
         *,
-        unitree_repo_root: Optional[str] = None,
         arm: str = "G1_29",
         ee: str = "dex3",
         motion_mode: bool = False,
@@ -61,26 +59,15 @@ class UnitreeG1DirectEnv(gym.Env):
     ):
         super().__init__()
 
-        repo_root = unitree_repo_root or os.environ.get("UNITREE_LEROBOT_ROOT")
-        if repo_root and repo_root not in sys.path:
-            sys.path.append(repo_root)
-
-        try:
-            from unitree_lerobot.eval_robot.make_robot import setup_robot_interface
-        except ImportError as exc:
-            raise ImportError(
-                "unitree_lerobot package not found. Please install the Unitree "
-                "evaluation repository (e.g. `pip install -e /path/to/unitree_lerobot`)."
-            ) from exc
+        # Expect unitree_lerobot to be importable; rely on environment setup.
+        from unitree_lerobot.eval_robot.make_robot import setup_robot_interface
 
         args = SimpleNamespace(arm=arm, ee=ee, motion=motion_mode, sim=simulation)
-        robot_if: Dict[str, object] = setup_robot_interface(args)
+        robot_if = setup_robot_interface(args)
 
         self._arm_ctrl = robot_if["arm_ctrl"]
         self._arm_ik = robot_if["arm_ik"]
         self._ee_shared_mem = robot_if.get("ee_shared_mem")
-        self._sim_state_subscriber = robot_if.get("sim_state_subscriber")
-
         self._arm_dof: int = int(robot_if["arm_dof"])
         self._ee_dof: int = int(robot_if.get("ee_dof", 0))
         self._has_dex3: bool = self._ee_dof > 0 and self._ee_shared_mem is not None
@@ -201,9 +188,3 @@ class UnitreeG1DirectEnv(gym.Env):
             self._arm_ctrl.ctrl_dual_arm(arm_home, tau)
         except Exception:
             pass
-
-        if self._sim_state_subscriber is not None:
-            try:
-                self._sim_state_subscriber.stop_subscribe()
-            except Exception:
-                pass

@@ -30,3 +30,7 @@ pip install -e .
 ```bash
 pip install flask
 ```
+
+6. **Install unitree_lerobot**
+
+follow https://github.com/yiheng-wang-nv/unitree_IL_lerobot/tree/3-camera-eval
