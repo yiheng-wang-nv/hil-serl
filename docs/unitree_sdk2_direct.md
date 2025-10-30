@@ -1,12 +1,6 @@
 # Unitree G1 + Dex3: Direct SDK2 Interface
 
-This note describes the recommended integration for controlling the Unitree
-G1 (29 DoF) with the Dex3 end-effector directly from HIL-SERL by reusing the
-official Unitree control stack.  Compared with the earlier HTTP bridge, this
-approach mirrors the production deployment code: Actions are converted to
-joint torques through Unitree's IK solver and the Dex3 commands flow through
-the dedicated shared-memory interface used by `Dex3_1_Controller`.
-
+This note describes how to control Unitree G1 (29 DoF) with the Dex3 end-effector from HIL-SERL by reusing the official Unitree control stack. Actions are converted to joint torques through Unitree's IK solver and the Dex3 commands flow through the dedicated shared-memory interface used by `Dex3_1_Controller`.
 ## Prerequisites
 
 1. Install Unitree's SDK2 in the same environment that runs HIL-SERL:
@@ -22,13 +16,11 @@ the dedicated shared-memory interface used by `Dex3_1_Controller`.
    ```bash
    export UNITREE_LEROBOT_ROOT=/localhome/local-vennw/code/unitree_IL_lerobot
    ```
-   Alternatively add the repository to `PYTHONPATH` or pass the path explicitly
-   when constructing the environment.
-
+  
 3. Start the Unitree simulator or connect to a real robot so that the SDK2 DDS
    topics are active.  Wait for the log line `DDS communication initialized`.
 
-## Quick start (direct environment)
+## Quick start
 
 ```python
 import numpy as np
@@ -36,7 +28,6 @@ import numpy as np
 from serl_robot_infra.unitree_env import UnitreeG1DirectEnv
 
 env = UnitreeG1DirectEnv(
-    unitree_repo_root="/localhome/local-vennw/code/unitree_IL_lerobot",
     arm="G1_29",
     ee="dex3",
     simulation=True,      # set False when running on real hardware
