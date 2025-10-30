@@ -9,10 +9,9 @@ This note describes how to control Unitree G1 (29 DoF) with the Dex3 end-effecto
    pip install -e .
    ```
 
-2. Clone the Unitree evaluation repository (already present at `/localhome/local-vennw/code/unitree_IL_lerobot`) and install it in the environment:
-   ```bash
-   pip install -e /localhome/local-vennw/code/unitree_IL_lerobot
-   ```
+2. install `unitree_IL_lerobot` in the environment:
+
+   refer to: https://github.com/yiheng-wang-nv/unitree_IL_lerobot/tree/3-camera-eval
 
 3. Start the Unitree simulator or connect to a real robot so that the SDK2 DDS
    topics are active.  Wait for the log line `DDS communication initialized`.
