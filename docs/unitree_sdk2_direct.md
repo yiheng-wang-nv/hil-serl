@@ -9,14 +9,11 @@ This note describes how to control Unitree G1 (29 DoF) with the Dex3 end-effecto
    pip install -e .
    ```
 
-2. Clone the Unitree evaluation repository (already present at
-   `/localhome/local-vennw/code/unitree_IL_lerobot`) and ensure it is visible
-   on the Python path.  The environment automatically checks the environment
-   variable `UNITREE_LEROBOT_ROOT`, so you can simply set:
+2. Clone the Unitree evaluation repository (already present at `/localhome/local-vennw/code/unitree_IL_lerobot`) and install it in the environment:
    ```bash
-   export UNITREE_LEROBOT_ROOT=/localhome/local-vennw/code/unitree_IL_lerobot
+   pip install -e /localhome/local-vennw/code/unitree_IL_lerobot
    ```
-  
+
 3. Start the Unitree simulator or connect to a real robot so that the SDK2 DDS
    topics are active.  Wait for the log line `DDS communication initialized`.
 
