@@ -65,7 +65,14 @@ class UnitreeG1DirectEnv(gym.Env):
         import importlib
 
         unitree_module = importlib.import_module("unitree_lerobot")
-        module_root = os.path.dirname(unitree_module.__file__)
+        module_file = getattr(unitree_module, "__file__", None)
+        if module_file:
+            module_root = os.path.dirname(module_file)
+        else:
+            locations = getattr(unitree_module, "__path__", [])
+            module_root = locations[0] if locations else ""
+        if not module_root:
+            raise RuntimeError("Could not determine unitree_lerobot installation path.")
         ros_pkg_path = os.environ.get("ROS_PACKAGE_PATH", "")
         paths = [p for p in ros_pkg_path.split(os.pathsep) if p]
         if module_root not in paths:
