@@ -102,3 +102,26 @@ will see the same control semantics as at evaluation time.
 * Extend reset/safety logic (e.g. “go to home pose”, collision limits).
 * Add camera/reward wrappers if needed (the `setup_image_client` helper from
   Unitree can be reused in a similar fashion).
+
+## Optional HTTP wrapper
+
+For compatibility with existing Franka-style tooling, a lightweight HTTP server is available:
+```bash
+python -m serl_robot_infra.robot_servers.unitree_g1_server --simulation
+```
+It exposes:
+- `/set_action` (POST): JSON `{"action": [...]} ` with 28 values `[14 arm | 7 left dex3 | 7 right dex3]`.
+- `/get_state` (GET): returns the latest observation.
+
+Internally the server delegates to `UnitreeG1DirectEnv`, so control semantics remain identical.
+
+## Suggested Development Roadmap
+
+1. **Core Environment reset & safety** – wrap `UnitreeG1DirectEnv` in a task-specific Gym env that handles go-to-home, randomisation, safe joint limits, and error recovery.
+2. **Observation wrappers** – reimplement Franka-style wrappers (RelativeFrame, Chunking, SpacemouseIntervention) and integrate camera streams.
+3. **Reward / termination** – define task-specific rewards, success criteria, and episode termination.
+4. **Task configs & scripts** – add Unitree entries under `examples/experiments/` with `TrainConfig`, `run_actor.sh`, `run_learner.sh`, etc.
+5. **Data collection tools** – update `record_demos.py`, `record_success_fail.py`, and dataset loaders for Unitree observations/actions.
+6. **Evaluation & logging** – integrate video logging, metrics, and optional HTTP control (already provided).
+
+Tackle these steps in order to reach feature parity with the existing Franka pipeline.
