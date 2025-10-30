@@ -6,8 +6,8 @@ Its purpose is to test connectivity between HIL-SERL and the new
 `unitree_g1_server.py` without depending on the full Franka stack.
 
 Key characteristics:
-    * action space: absolute joint targets for the 14 arm joints
-    * observation: concatenated joint positions and velocities
+    * action space: absolute joint targets for 14 arm joints + 14 Dex3 finger joints
+    * observation: concatenated joint positions and velocities for the same joints
     * reward: always zero (placeholder)
 
 Before using this environment with real hardware, safety limits, reset logic,
@@ -35,7 +35,9 @@ class UnitreeG1ArmEnv(gym.Env):
         super().__init__()
         self.server_url = server_url.rstrip("/") + "/"
 
-        self._num_joints = 14
+        self._num_arm_joints = 14
+        self._num_hand_joints = 7  # per hand
+        self._num_joints = self._num_arm_joints + 2 * self._num_hand_joints
         limit = float(joint_position_limit)
         high = np.ones(self._num_joints, dtype=np.float32) * limit
         self.action_space = gym.spaces.Box(-high, high, dtype=np.float32)
@@ -44,21 +46,42 @@ class UnitreeG1ArmEnv(gym.Env):
         self.observation_space = gym.spaces.Box(-obs_high, obs_high, dtype=np.float32)
 
         self._last_obs = np.zeros(self.observation_space.shape, dtype=np.float32)
-        self._hold_position = (
-            np.array(default_hold_pos, dtype=np.float32)
-            if default_hold_pos is not None
-            else np.zeros(self._num_joints, dtype=np.float32)
-        )
+        if default_hold_pos is not None:
+            hold = np.asarray(default_hold_pos, dtype=np.float32)
+            if hold.shape[0] != self._num_joints:
+                raise ValueError(f"default_hold_pos must have {self._num_joints} entries.")
+            self._hold_position = hold
+        else:
+            self._hold_position = np.zeros(self._num_joints, dtype=np.float32)
 
     # ------------------------------------------------------------------ utilities
     def _fetch_state(self) -> Dict[str, np.ndarray]:
         response = requests.post(self.server_url + "getstate", timeout=1.0)
         response.raise_for_status()
         data = response.json()
-        positions = np.asarray(data.get("joint_positions", []), dtype=np.float32)
-        velocities = np.asarray(data.get("joint_velocities", []), dtype=np.float32)
-        if positions.size < self._num_joints or velocities.size < self._num_joints:
+        arm_pos = np.asarray(data.get("arm_joint_positions", []), dtype=np.float32)
+        dex_left_pos = np.asarray(data.get("dex3_left_joint_positions", []), dtype=np.float32)
+        dex_right_pos = np.asarray(data.get("dex3_right_joint_positions", []), dtype=np.float32)
+        arm_vel = np.asarray(data.get("arm_joint_velocities", []), dtype=np.float32)
+        dex_left_vel = np.asarray(data.get("dex3_left_joint_velocities", []), dtype=np.float32)
+        dex_right_vel = np.asarray(data.get("dex3_right_joint_velocities", []), dtype=np.float32)
+
+        if (
+            arm_pos.size < self._num_arm_joints
+            or dex_left_pos.size < self._num_hand_joints
+            or dex_right_pos.size < self._num_hand_joints
+            or arm_vel.size < self._num_arm_joints
+            or dex_left_vel.size < self._num_hand_joints
+            or dex_right_vel.size < self._num_hand_joints
+        ):
             raise RuntimeError("Unitree state message has insufficient length.")
+
+        positions = np.concatenate(
+            [arm_pos[: self._num_arm_joints], dex_left_pos[: self._num_hand_joints], dex_right_pos[: self._num_hand_joints]]
+        )
+        velocities = np.concatenate(
+            [arm_vel[: self._num_arm_joints], dex_left_vel[: self._num_hand_joints], dex_right_vel[: self._num_hand_joints]]
+        )
         return {
             "joint_positions": positions[: self._num_joints],
             "joint_velocities": velocities[: self._num_joints],
@@ -100,4 +123,3 @@ class UnitreeG1ArmEnv(gym.Env):
     def close(self):
         # Nothing to clean up for the HTTP client.
         return None
-

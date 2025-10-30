@@ -3,9 +3,9 @@ Minimal HTTP bridge between Unitree G1 DDS topics and the SERL robot infra API.
 
 The server exposes a lightweight REST interface that mimics the subset of
 Franka's endpoints required for quick smoke tests:
-    - /joint_position : position command for the dual arm (14 joints)
-    - /open_gripper   : open command for the Dex3 hand (whole-hand open)
-    - /close_gripper  : close command for the Dex3 hand (whole-hand close)
+    - /joint_position : position command for 14 arm joints + 14 Dex3 finger joints
+    - /open_gripper   : helper command to fully open both Dex3 hands
+    - /close_gripper  : helper command to fully close both Dex3 hands
     - /getstate       : returns latest joint position/velocity snapshot
 
 The implementation is intentionally conservative:
@@ -30,6 +30,7 @@ import time
 import logging
 from dataclasses import dataclass, field
 from copy import deepcopy
+from enum import IntEnum
 from typing import Dict, List, Optional
 
 from flask import Flask, jsonify, request
@@ -44,8 +45,11 @@ try:
     from unitree_sdk2py.idl.unitree_hg.msg.dds_ import (
         LowCmd_ as HgLowCmd,
         LowState_ as HgLowState,
+        HandCmd_ as HgHandCmd,
+        HandState_ as HgHandState,
     )
     from unitree_sdk2py.idl.default import unitree_hg_msg_dds__LowCmd_
+    from unitree_sdk2py.idl.default import unitree_hg_msg_dds__HandCmd_
     from unitree_sdk2py.utils.crc import CRC
 except ImportError as exc:
     raise ImportError(
@@ -69,6 +73,15 @@ class JointStateSnapshot:
     velocity: List[float] = field(default_factory=list)
     timestamp: float = 0.0
     mode_machine: int = 0
+
+
+@dataclass
+class Dex3StateSnapshot:
+    left_position: List[float] = field(default_factory=list)
+    right_position: List[float] = field(default_factory=list)
+    left_velocity: List[float] = field(default_factory=list)
+    right_velocity: List[float] = field(default_factory=list)
+    timestamp: float = 0.0
 
 
 class G1ArmBridge:
@@ -96,11 +109,11 @@ class G1ArmBridge:
         self._state_lock = threading.Lock()
         self._terminated = threading.Event()
 
-        # Initialise DDS factory (0: robot, 1: simulation, same convention as SDK2)
-        ChannelFactoryInitialize(1 if simulation_mode else 0)
         # Autodetermine network interface unless the environment already specifies one.
         if "CYCLONEDDS_URI" not in os.environ:
             os.environ["CYCLONEDDS_URI"] = ChannelConfigAutoDetermine
+        # Initialise DDS factory (0: robot, 1: simulation, same convention as SDK2)
+        ChannelFactoryInitialize(1 if simulation_mode else 0)
 
         lowcmd_topic = LOWCMD_TOPIC if use_motion_topic else "rt/lowcmd"
         self._publisher = ChannelPublisher(lowcmd_topic, HgLowCmd)
@@ -159,6 +172,7 @@ class G1ArmBridge:
                 position=list(self._latest_state.position),
                 velocity=list(self._latest_state.velocity),
                 timestamp=self._latest_state.timestamp,
+                mode_machine=self._latest_state.mode_machine,
             )
 
     def _state_loop(self):
@@ -190,26 +204,6 @@ class G1ArmBridge:
                 cmd.tau = 0.0
             self._update_crc()
 
-    def set_hand_open_ratio(self, ratio: float):
-        """Broadcast a simple open/close command by mirroring it on wrist yaw motors.
-
-        Dex3 has many actuators; for this minimal bridge we reuse wrist yaw joints as
-        placeholders so that downstream layers can test the HTTP path. Real projects
-        must replace this with the proper Dex3 interface or separate publisher.
-        """
-        clamped = max(0.0, min(1.0, ratio))
-        wrist_targets = [
-            self.ARM_JOINT_INDEXES.index(idx)
-            for idx in (21, 28)  # left/right wrist yaw
-            if idx in self.ARM_JOINT_INDEXES
-        ]
-
-        with self._msg_lock:
-            for local_idx in wrist_targets:
-                motor_index = self.ARM_JOINT_INDEXES[local_idx]
-                self._command_msg.motor_cmd[motor_index].q = clamped
-            self._update_crc()
-
     def _publish_loop(self):
         while not self._terminated.is_set():
             start = time.time()
@@ -225,12 +219,154 @@ class G1ArmBridge:
         self._command_msg.crc = self._crc.Crc(self._command_msg)
 
 
+class Dex3JointIndexLeft(IntEnum):
+    Thumb0 = 0
+    Thumb1 = 1
+    Thumb2 = 2
+    Middle0 = 3
+    Middle1 = 4
+    Index0 = 5
+    Index1 = 6
+
+
+class Dex3JointIndexRight(IntEnum):
+    Thumb0 = 0
+    Thumb1 = 1
+    Thumb2 = 2
+    Index0 = 3
+    Index1 = 4
+    Middle0 = 5
+    Middle1 = 6
+
+
+class Dex3Bridge:
+    LEFT_CMD_TOPIC = "rt/dex3/left/cmd"
+    RIGHT_CMD_TOPIC = "rt/dex3/right/cmd"
+    LEFT_STATE_TOPIC = "rt/dex3/left/state"
+    RIGHT_STATE_TOPIC = "rt/dex3/right/state"
+
+    def __init__(self, publish_rate_hz: float = 100.0):
+        self._publish_period = 1.0 / publish_rate_hz
+        self._cmd_lock = threading.Lock()
+        self._state_lock = threading.Lock()
+        self._terminated = threading.Event()
+        self._initial_state_ready = threading.Event()
+
+        self._left_publisher = ChannelPublisher(self.LEFT_CMD_TOPIC, HgHandCmd)
+        self._left_publisher.Init()
+        self._right_publisher = ChannelPublisher(self.RIGHT_CMD_TOPIC, HgHandCmd)
+        self._right_publisher.Init()
+
+        self._left_subscriber = ChannelSubscriber(self.LEFT_STATE_TOPIC, HgHandState)
+        self._left_subscriber.Init()
+        self._right_subscriber = ChannelSubscriber(self.RIGHT_STATE_TOPIC, HgHandState)
+        self._right_subscriber.Init()
+
+        self._left_command = unitree_hg_msg_dds__HandCmd_()
+        self._right_command = unitree_hg_msg_dds__HandCmd_()
+        self._initialise_hand_command(self._left_command, Dex3JointIndexLeft)
+        self._initialise_hand_command(self._right_command, Dex3JointIndexRight)
+
+        self._latest_state = Dex3StateSnapshot(
+            left_position=[0.0] * len(Dex3JointIndexLeft),
+            right_position=[0.0] * len(Dex3JointIndexRight),
+            left_velocity=[0.0] * len(Dex3JointIndexLeft),
+            right_velocity=[0.0] * len(Dex3JointIndexRight),
+            timestamp=time.time(),
+        )
+
+        self._state_thread = threading.Thread(
+            target=self._state_loop, name="dex3_state_loop", daemon=True
+        )
+        self._state_thread.start()
+
+        self._publish_thread = threading.Thread(
+            target=self._publish_loop, name="dex3_publish_loop", daemon=True
+        )
+        self._publish_thread.start()
+
+        if not self._initial_state_ready.wait(timeout=5.0):
+            logger.warning(
+                "Dex3Bridge: waiting for initial dexterous hand state timed out."
+            )
+
+    @staticmethod
+    def _encode_mode(motor_id: int, status: int = 0x01, timeout: int = 0) -> int:
+        mode = 0
+        mode |= (motor_id & 0x0F)
+        mode |= (status & 0x07) << 4
+        mode |= (timeout & 0x01) << 7
+        return mode
+
+    def _initialise_hand_command(self, message: HgHandCmd, joint_enum: IntEnum):
+        for idx in joint_enum:
+            cmd = message.motor_cmd[idx]
+            cmd.mode = self._encode_mode(idx)
+            cmd.q = 0.0
+            cmd.dq = 0.0
+            cmd.tau = 0.0
+            cmd.kp = 1.5
+            cmd.kd = 0.2
+
+    def shutdown(self):
+        self._terminated.set()
+        self._state_thread.join(timeout=1.0)
+        self._publish_thread.join(timeout=1.0)
+
+    def set_joint_targets(self, left: List[float], right: List[float]):
+        if len(left) != len(Dex3JointIndexLeft) or len(right) != len(Dex3JointIndexRight):
+            raise ValueError("Dex3Bridge expects 7 joint values per hand.")
+        with self._cmd_lock:
+            for idx, value in enumerate(left):
+                self._left_command.motor_cmd[idx].q = float(value)
+            for idx, value in enumerate(right):
+                self._right_command.motor_cmd[idx].q = float(value)
+
+    def get_snapshot(self) -> Dex3StateSnapshot:
+        with self._state_lock:
+            return Dex3StateSnapshot(
+                left_position=list(self._latest_state.left_position),
+                right_position=list(self._latest_state.right_position),
+                left_velocity=list(self._latest_state.left_velocity),
+                right_velocity=list(self._latest_state.right_velocity),
+                timestamp=self._latest_state.timestamp,
+            )
+
+    def _state_loop(self):
+        while not self._terminated.is_set():
+            left_msg = self._left_subscriber.Read(timeout=0.02)
+            right_msg = self._right_subscriber.Read(timeout=0.02)
+            if left_msg is None or right_msg is None:
+                continue
+            with self._state_lock:
+                for idx in Dex3JointIndexLeft:
+                    self._latest_state.left_position[idx] = left_msg.motor_state[idx].q
+                    self._latest_state.left_velocity[idx] = left_msg.motor_state[idx].dq
+                for idx in Dex3JointIndexRight:
+                    self._latest_state.right_position[idx] = right_msg.motor_state[idx].q
+                    self._latest_state.right_velocity[idx] = right_msg.motor_state[idx].dq
+                self._latest_state.timestamp = time.time()
+            self._initial_state_ready.set()
+
+    def _publish_loop(self):
+        while not self._terminated.is_set():
+            start = time.time()
+            with self._cmd_lock:
+                left_cmd = deepcopy(self._left_command)
+                right_cmd = deepcopy(self._right_command)
+            self._left_publisher.Write(left_cmd)
+            self._right_publisher.Write(right_cmd)
+            elapsed = time.time() - start
+            sleep_time = self._publish_period - elapsed
+            if sleep_time > 0:
+                time.sleep(sleep_time)
+
 # ------------------------------------------------------------------------------
 # Flask server
 # ------------------------------------------------------------------------------
 
 
-def create_app(bridge: G1ArmBridge) -> Flask:
+def create_app(arm_bridge: G1ArmBridge, dex_bridge: Dex3Bridge) -> Flask:
     app = Flask(__name__)
 
     @app.route("/joint_position", methods=["POST"])
@@ -239,28 +375,41 @@ def create_app(bridge: G1ArmBridge) -> Flask:
         if not payload or "joint_positions" not in payload:
             return jsonify({"error": "joint_positions missing"}), 400
         try:
-            bridge.set_arm_joint_targets(payload["joint_positions"])
+            joint_positions = payload["joint_positions"]
+            if len(joint_positions) != 28:
+                return jsonify({"error": "Expected 28 joint values (14 arm + 14 dex3)"}), 400
+            arm_targets = joint_positions[:14]
+            dex_left = joint_positions[14:21]
+            dex_right = joint_positions[21:]
+            arm_bridge.set_arm_joint_targets(arm_targets)
+            dex_bridge.set_joint_targets(dex_left, dex_right)
         except ValueError as exc:
             return jsonify({"error": str(exc)}), 400
         return jsonify({"status": "ok"})
 
     @app.route("/open_gripper", methods=["POST"])
     def open_gripper():
-        bridge.set_hand_open_ratio(1.0)
+        dex_bridge.set_joint_targets([1.0] * 7, [1.0] * 7)
         return jsonify({"status": "ok"})
 
     @app.route("/close_gripper", methods=["POST"])
     def close_gripper():
-        bridge.set_hand_open_ratio(0.0)
+        dex_bridge.set_joint_targets([0.0] * 7, [0.0] * 7)
         return jsonify({"status": "ok"})
 
     @app.route("/getstate", methods=["POST"])
     def get_state():
-        snapshot = bridge.get_snapshot()
+        arm_snapshot = arm_bridge.get_snapshot()
+        dex_snapshot = dex_bridge.get_snapshot()
         response: Dict[str, Optional[List[float]]] = {
-            "joint_positions": snapshot.position,
-            "joint_velocities": snapshot.velocity,
-            "timestamp": snapshot.timestamp,
+            "arm_joint_positions": arm_snapshot.position[: len(G1ArmBridge.ARM_JOINT_INDEXES)],
+            "arm_joint_velocities": arm_snapshot.velocity[: len(G1ArmBridge.ARM_JOINT_INDEXES)],
+            "dex3_left_joint_positions": dex_snapshot.left_position,
+            "dex3_right_joint_positions": dex_snapshot.right_position,
+            "dex3_left_joint_velocities": dex_snapshot.left_velocity,
+            "dex3_right_joint_velocities": dex_snapshot.right_velocity,
+            "mode_machine": arm_snapshot.mode_machine,
+            "timestamp": max(arm_snapshot.timestamp, dex_snapshot.timestamp),
         }
         return jsonify(response)
 
@@ -285,14 +434,16 @@ def main():
     )
     args = parser.parse_args()
 
-    bridge = G1ArmBridge(
+    arm_bridge = G1ArmBridge(
         use_motion_topic=args.motion_topic, simulation_mode=args.simulation
     )
-    app = create_app(bridge)
+    dex_bridge = Dex3Bridge()
+    app = create_app(arm_bridge, dex_bridge)
     try:
         app.run(host=args.host, port=args.port)
     finally:
-        bridge.shutdown()
+        arm_bridge.shutdown()
+        dex_bridge.shutdown()
 
 
 if __name__ == "__main__":

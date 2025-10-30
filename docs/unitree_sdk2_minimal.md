@@ -6,14 +6,14 @@ stack.  The goal is to provide a quick end-to-end smoke test:
 
 1. run the HTTP server that forwards REST calls to Unitree DDS topics;
 2. interact with the server via a tiny Gym environment;
-3. confirm that joints and the placeholder gripper command respond correctly.
+3. confirm that the arm and Dex3 joints respond correctly.
 
 ## Implemented components
 
 | File | Purpose | Reference code |
 | ---- | ------- | -------------- |
-| `serl_robot_infra/robot_servers/unitree_g1_server.py` | Flask server exposing `/joint_position`, `/open_gripper`, `/close_gripper`, `/getstate` endpoints. It internally wraps a DDS helper that mirrors the logic of Unitree's `G1_29_ArmController` (see `xr_teleoperate/teleop/robot_control/robot_arm.py` lines ~300+). | Franka server structure from `serl_robot_infra/robot_servers/franka_server.py` |
-| `serl_robot_infra/unitree_env/unitree_arm_env.py` | Minimal Gym env that sends absolute joint targets to the server and reads back joint positions/velocities. Designed only for smoke testing. | Observation/action wiring pattern from `serl_robot_infra/franka_env/envs/franka_env.py` (step/reset methods) |
+| `serl_robot_infra/robot_servers/unitree_g1_server.py` | Flask server exposing `/joint_position`, `/open_gripper`, `/close_gripper`, `/getstate` endpoints. It bridges both the 14 arm joints and 14 Dex3 finger joints via the Unitree SDK2 DDS topics (arm code mirrors `G1_29_ArmController`, hand code mirrors `Dex3_1_Controller`). | Franka server structure from `serl_robot_infra/robot_servers/franka_server.py` |
+| `serl_robot_infra/unitree_env/unitree_arm_env.py` | Minimal Gym env that sends 28-dimensional joint targets (arm + Dex3) to the server and reads back joint positions/velocities. Designed only for smoke testing. | Observation/action wiring pattern from `serl_robot_infra/franka_env/envs/franka_env.py` (step/reset methods) |
 | `serl_robot_infra/unitree_env/__init__.py` | Package export for the new environment. | Conventional module init pattern |
 | `docs/unitree_sdk2_minimal.md` | This guide. | — |
 
@@ -31,18 +31,18 @@ stack.  The goal is to provide a quick end-to-end smoke test:
 ## How to review the code
 
 1. **Server logic**  
-   - Start with `G1ArmBridge` inside `unitree_g1_server.py`.  It sets up DDS publishers/subscribers, keeps the latest low state snapshot, and streams the command message at 250 Hz.  
-   - Endpoints in `create_app()` simply forward HTTP payloads to `G1ArmBridge` methods.  
-   - Key differences vs Franka: only position control is exposed, and the Dex3 command is currently modelled as a simple wrist yaw placeholder.
+   - `G1ArmBridge` handles the torso/arm LowCmd topic (mirrors `G1_29_ArmController`).  
+   - `Dex3Bridge` handles the hand topics (`rt/dex3/*`) similar to `Dex3_1_Controller`.  
+   - Endpoints in `create_app()` split/merge the 28-D vectors and forward them to the two bridges.
 
 2. **Environment behaviour**  
-   - `UnitreeG1ArmEnv` clamps actions to a configurable joint limit, posts them via `/joint_position`, and pulls observations from `/getstate`.  
+   - `UnitreeG1ArmEnv` clamps the 28-D action, posts it via `/joint_position`, and concatenates the returned arm/Dex3 states.  
    - Observations are limited to joint position/velocity; reward is always zero so that training loops can boot without extra logic.
 
 3. **Safety / TODOs**  
    - No collision checks or soft limits are enforced yet.  
-   - Proper Dex3 finger control needs a dedicated DDS publisher.  
-   - Reset logic should be extended once the kinematic home pose is known.
+   - Reset logic should be extended once the kinematic home pose is known.  
+   - Camera streams, reward signals, and human intervention wrappers still need to be ported from the Franka stack.
 
 ## Quick validation workflow
 
@@ -56,21 +56,21 @@ stack.  The goal is to provide a quick end-to-end smoke test:
    python -m serl_robot_infra.robot_servers.unitree_g1_server --simulation --port 6000
    ```
 
-3. Run the minimal environment test:
+3. Run the minimal environment test (28-D action for arm + Dex3):
    ```python
-   from serl_robot_infra.unitree_env import UnitreeG1ArmEnv
-   import numpy as np
+from serl_robot_infra.unitree_env import UnitreeG1ArmEnv
+import numpy as np
 
-   env = UnitreeG1ArmEnv(server_url="http://127.0.0.1:6000/")
-   obs, info = env.reset()
-   action = np.zeros(14, dtype=np.float32)
-   obs, reward, terminated, truncated, info = env.step(action)
-   env.close()
-   ```
+env = UnitreeG1ArmEnv(server_url="http://127.0.0.1:6000/")
+obs, info = env.reset()
+action = np.zeros(28, dtype=np.float32)  # [14 arm | 7 left | 7 right]
+obs, reward, terminated, truncated, info = env.step(action)
+env.close()
+```
 
-5. Watch the server console output and the simulator:
-   - If DDS is flowing, `/getstate` will return live joint data (you can verify with `curl -X POST http://127.0.0.1:6000/getstate`).
-   - Try small non-zero entries in `action` to check that the simulated arm responds.
+4. Watch the server console output and the simulator:
+   - If DDS is flowing, `/getstate` will return live joint data (verify with `curl -X POST http://127.0.0.1:6000/getstate`).
+   - Try small non-zero entries in `action` to check that the simulated arm and Dex3 respond.
 
 ## Troubleshooting
 
@@ -88,7 +88,7 @@ stack.  The goal is to provide a quick end-to-end smoke test:
 
 ## Next steps
 
-- Map the REST interface to the exact Dex3 finger state.
-- Port reset/randomisation logic from the Franka environment.
+- Add reset/randomisation logic and collision-aware safety checks.
+- Expose camera feeds and reward classifiers similar to the Franka pipeline.
 - Integrate the environment into the `examples/experiments` pipeline once the
   long-term observation/action structure is agreed upon.
