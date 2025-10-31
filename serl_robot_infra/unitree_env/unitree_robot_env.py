@@ -34,6 +34,12 @@ from typing import Dict, Optional
 import gymnasium as gym
 import numpy as np
 
+from .joint_limits import (
+    JOINT_NAMES,
+    JOINT_LOWER_BOUNDS,
+    JOINT_UPPER_BOUNDS,
+)
+
 
 @dataclass
 class UnitreeRobotState:
@@ -53,10 +59,18 @@ class UnitreeG1DirectEnv(gym.Env):
         motion_mode: bool = False,
         simulation: bool = False,
         action_dt: float = 0.02,
-        arm_position_limit: float = 2.7,
-        hand_min_position: float = 0.0,
-        hand_max_position: float = 1.0,
     ):
+        """
+        Args:
+            arm: Key into Unitree's `ARM_CONFIG` table. Defaults to the 29-DoF dual-arm model.
+            ee: End-effector entry from Unitree's `EE_CONFIG`. `"dex3"` enables the Dex3 hand pair.
+            motion_mode: Mirrors the `--motion` flag in Unitree scripts; set `True` to enable motion
+                blending as in the official evaluation utilities.
+            simulation: When `True`, connects to the simulator DDS channel (`ChannelFactoryInitialize(1)`).
+                Matches the `--sim` CLI flag used in Unitree examples.
+            action_dt: Control period in seconds. `0.02` (50 Hz) matches
+                `unitree_sdk2_python/examples/low_level/lowlevel_control.py` and the IsaacLab controller.
+        """
         super().__init__()
 
         # Expect unitree_lerobot to be importable; rely on environment setup.
@@ -74,21 +88,15 @@ class UnitreeG1DirectEnv(gym.Env):
 
         self._action_dt = float(action_dt)
 
-        arm_low = -np.ones(self._arm_dof, dtype=np.float32) * arm_position_limit
-        arm_high = np.ones(self._arm_dof, dtype=np.float32) * arm_position_limit
+        # Per-joint bounds are loaded from `joint_limits.py`, which mirrors the URDF limits in
+        # `unitree_lerobot/eval_robot/assets/g1/g1_body29_hand14.urdf`. Update that file if Unitree
+        # ships a new model.
+        self.joint_names = list(JOINT_NAMES)
+        self._lower_bounds = JOINT_LOWER_BOUNDS.astype(np.float32)
+        self._upper_bounds = JOINT_UPPER_BOUNDS.astype(np.float32)
+        self.action_space = gym.spaces.Box(self._lower_bounds, self._upper_bounds, dtype=np.float32)
 
-        if self._has_dex3:
-            hand_low = np.full(self._ee_dof * 2, hand_min_position, dtype=np.float32)
-            hand_high = np.full(self._ee_dof * 2, hand_max_position, dtype=np.float32)
-            action_low = np.concatenate([arm_low, hand_low])
-            action_high = np.concatenate([arm_high, hand_high])
-        else:
-            action_low = arm_low
-            action_high = arm_high
-
-        self.action_space = gym.spaces.Box(action_low, action_high, dtype=np.float32)
-
-        obs_dim = self._arm_dof + (self._ee_dof * 2 if self._has_dex3 else 0)
+        obs_dim = len(self.joint_names)
         self.observation_space = gym.spaces.Box(
             -np.inf, np.inf, shape=(obs_dim * 2,), dtype=np.float32
         )

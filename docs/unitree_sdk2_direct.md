@@ -50,10 +50,11 @@ env.close()
 | Dex3 – left | 14–20 | Thumb joints 0–2, middle joints 0–1, index joints 0–1 (`Dex3_1_Left_JointIndex`) |
 | Dex3 – right | 21–27 | Thumb joints 0–2, index joints 0–1, middle joints 0–1 (`Dex3_1_Right_JointIndex`) |
 
-Arm angles are interpreted in radians. By default the action space clamps arm
-targets to ±2.7 rad and Dex3 targets to the range `[0, 1]` (open → closed), but
-you can override this by passing `arm_position_limit`, `hand_min_position`, and
-`hand_max_position` to the environment.
+Every joint is clipped to the limits exported from
+`unitree_lerobot/eval_robot/assets/g1/g1_body29_hand14.urdf`. The numerical
+values (and joint names) live in `serl_robot_infra/unitree_env/joint_limits.py`.
+If Unitree updates the URDF, regenerate that table and keep the ordering
+aligned with the action vector documented above.
 
 ### Observations
 
@@ -68,7 +69,12 @@ entries.
 
 ## How it works
 
-Internally `UnitreeG1DirectEnv` calls:
+`UnitreeG1DirectEnv` clamps actions to the URDF-sourced limits, so RL agents are
+kept within the safe ranges defined by Unitree. The control loop sleeps for
+`action_dt` seconds between steps; the default `0.02` matches Unitree's 50 Hz
+examples (`examples/low_level/lowlevel_control.py`).
+
+Internally the environment calls:
 
 ```python
 from unitree_lerobot.eval_robot.make_robot import setup_robot_interface
@@ -125,3 +131,11 @@ Internally the server delegates to `UnitreeG1DirectEnv`, so control semantics re
 6. **Evaluation & logging** – integrate video logging, metrics, and optional HTTP control (already provided).
 
 Tackle these steps in order to reach feature parity with the existing Franka pipeline.
+
+## Maintaining joint limits
+
+`serl_robot_infra/unitree_env/joint_limits.py` mirrors the limits encoded in
+`unitree_lerobot/eval_robot/assets/g1/g1_body29_hand14.urdf`. When Unitree
+releases a new URDF, re-run the extraction script (or update the table manually)
+so the environment clips actions to the official ranges for both the arms and
+the Dex3 hands.
