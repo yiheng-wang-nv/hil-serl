@@ -39,9 +39,16 @@ class UnitreeHTTPServer:
             action_dt=action_dt,
         )
         self._action_lock = threading.Lock()
+        self._stop_event = threading.Event()
         self._latest_obs, self._latest_info = self._env.reset()
+        self._last_action = self._latest_obs[:28].copy()
+        self._control_thread = threading.Thread(target=self._control_loop, name="unitree-http-loop", daemon=True)
+        self._control_thread.start()
 
     def close(self):
+        self._stop_event.set()
+        if self._control_thread.is_alive():
+            self._control_thread.join(timeout=1.0)
         self._env.close()
 
     def get_state(self) -> Dict[str, list]:
@@ -58,9 +65,20 @@ class UnitreeHTTPServer:
             "arm_joint_velocities": arm_vel.tolist(),
         }
 
-    def step(self, action: np.ndarray) -> Dict[str, float]:
+    def _control_loop(self):
+        """Continuously apply the most recent action so the DDS controller receives commands at 50 Hz."""
+        while not self._stop_event.is_set():
+            with self._action_lock:
+                action = self._last_action.copy()
+            obs, _, _, _, info = self._env.step(action)
+            with self._action_lock:
+                self._latest_obs = obs
+                self._latest_info = info
+
+    def set_action(self, action: np.ndarray) -> Dict[str, float]:
         with self._action_lock:
-            self._latest_obs, _, _, _, info = self._env.step(action)
+            self._last_action = np.asarray(action, dtype=np.float32)
+            info = dict(self._latest_info)
         return info
 
 
@@ -75,7 +93,7 @@ def create_app(server: UnitreeHTTPServer) -> Flask:
         action = np.asarray(payload["action"], dtype=np.float32)
         if action.shape != (28,):
             return jsonify({"error": "action must be length 28 (14 arm + 14 dex3)"}), 400
-        info = server.step(action)
+        info = server.set_action(action)
         return jsonify({"status": "ok", "info": info})
 
     @app.route("/get_state", methods=["GET"])

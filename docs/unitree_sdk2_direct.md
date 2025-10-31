@@ -119,7 +119,47 @@ It exposes:
 - `/set_action` (POST): JSON `{"action": [...]} ` with 28 values `[14 arm | 7 left dex3 | 7 right dex3]`.
 - `/get_state` (GET): returns the latest observation.
 
-Internally the server delegates to `UnitreeG1DirectEnv`, so control semantics remain identical.
+Internally the server delegates to `UnitreeG1DirectEnv`, so control semantics remain identical.  
+The server keeps streaming the most recent action at 50 Hz, so the
+simulation/robot continues to receive commands even when you are not sending new HTTP requests.
+
+Example request sequence (assuming the server runs on `localhost:6000`):
+
+```bash
+# Query the latest observation
+curl -s http://127.0.0.1:6000/get_state | jq
+
+# Send a small joint command (here: +0.05 rad on both elbows)
+curl -s -X POST http://127.0.0.1:6000/set_action \
+     -H "Content-Type: application/json" \
+     -d '{"action": [0,0,0,0.05,0,0,0,  0,0,0,0.05,0,0,0,  0,0,0,0,0,0,0,  0,0,0,0,0,0,0]}'
+```
+
+The server replies with `{"status": "ok"}` when the payload is accepted. Values outside the joint limits are clipped using the URDF-derived bounds documented above.
+
+### End-to-end verification workflow
+
+1. **Launch the Unitree simulator** (`unitree_sim_isaaclab`) with the DDS pipeline (e.g. `Isaac-Simple-Wave-G129-Dex3-Joint`). Wait for the console message: `DDS communication initialized`.
+2. **Start the HTTP bridge**:
+   ```bash
+   (hilserl) python -m serl_robot_infra.robot_servers.unitree_g1_server --simulation --port 6000
+   ```
+   You should see the controller thread logging from Isaac and the Flask server banner.
+3. **Check the current state**:
+   ```bash
+   curl -s http://127.0.0.1:6000/get_state | jq '.arm_joint_positions'
+   ```
+   The 14 returned numbers are the arm joint angles (radians). They should match the pose shown in Isaac.
+4. **Send a test command**:
+   ```bash
+   # Add +0.2 rad to the left elbow (index 3)
+   curl -s -X POST http://127.0.0.1:6000/set_action \
+        -H "Content-Type: application/json" \
+        -d '{"action": [0,0,0,0.2,0,0,0,  0,0,0,0,0,0,0,  0,0,0,0,0,0,0,  0,0,0,0,0,0,0]}'
+   ```
+   Within a second you should see the left elbow bend forward in simulation. A subsequent `get_state`
+   call will show the elbow angle close to `0.2` rad, confirming the two-way connection.
+5. **Hold or reset**: send another action (e.g. all zeros or the initial joint vector from `get_state`) to keep the arms steady.
 
 ## Suggested Development Roadmap
 
