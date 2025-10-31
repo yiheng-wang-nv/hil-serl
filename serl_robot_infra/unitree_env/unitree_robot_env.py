@@ -235,24 +235,6 @@ class UnitreeG1DirectEnv(gym.Env):
 
     def close(self):
         try:
-            action = np.asarray(self._last_action, dtype=np.float32)
-            if action.shape[0] != self.action_space.shape[0]:
-                action = np.clip(
-                    np.zeros(self.action_space.shape[0], dtype=np.float32),
-                    self.action_space.low,
-                    self.action_space.high,
-                )
-            arm_target = action[: self._arm_dof]
-            tau = self._arm_ik.solve_tau(arm_target)
-            self._arm_ctrl.ctrl_dual_arm(arm_target, tau)
-            if self._has_dex3:
-                left = action[self._arm_dof : self._arm_dof + self._ee_dof]
-                right = action[self._arm_dof + self._ee_dof : self._arm_dof + 2 * self._ee_dof]
-                with self._ee_shared_mem["lock"]:
-                    self._ee_shared_mem["left"][:] = left
-                    self._ee_shared_mem["right"][:] = right
-                    if "action" in self._ee_shared_mem:
-                        self._ee_shared_mem["action"][: self._ee_dof] = left
-                        self._ee_shared_mem["action"][self._ee_dof : 2 * self._ee_dof] = right
+            self.go_home()
         except Exception:
             pass

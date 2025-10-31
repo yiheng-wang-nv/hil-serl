@@ -37,11 +37,8 @@ print("observation shape:", obs.shape)
 action = np.zeros(28, dtype=np.float32)
 obs, reward, terminated, truncated, info = env.step(action)
 
-# Return to the zero joint configuration before shutting down (optional but recommended)
-env.go_home(steps=200)
-
 # Small non-zero commands move the arms and hands via the official SDK2 stack.
-env.close()
+env.close()  # automatically returns to the zero joint configuration before releasing control
 ```
 
 ### Joint ordering
@@ -121,7 +118,7 @@ python -m serl_robot_infra.robot_servers.unitree_g1_server --simulation
 It exposes:
 - `/set_action` (POST): JSON `{"action": [...]} ` with 28 values `[14 arm | 7 left dex3 | 7 right dex3]`.
 - `/get_state` (GET): returns the latest observation.
-- `/go_home` (POST): optionally `{"steps": 200}` to hold the zero joint configuration for the requested number of control cycles.
+- `/go_home` (POST): optionally `{"steps": 200}` to hold the zero joint configuration for the requested number of control cycles (the server also calls this automatically when shutting down).
 
 Internally the server delegates to `UnitreeG1DirectEnv`, so control semantics remain identical.  
 The server keeps streaming the most recent action at 50 Hz, so the
@@ -166,7 +163,7 @@ The server replies with `{"status": "ok"}` when the payload is accepted. Values 
    ```
    Within a second you should see the left elbow bend forward in simulation. A subsequent `get_state`
    call will show the elbow angle close to `0.2` rad, confirming the two-way connection.
-5. **Hold or reset**: send another action (e.g. all zeros or the initial joint vector from `get_state`) to keep the arms steady, or call `/go_home` to move back to the all-zero joint vector.
+5. **Hold or reset**: send another action (e.g. all zeros or the initial joint vector from `get_state`) to keep the arms steady, or call `/go_home` to move back to the all-zero joint vector (the HTTP server will invoke this automatically on exit).
 
 ## Suggested Development Roadmap
 
