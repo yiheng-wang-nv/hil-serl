@@ -146,6 +146,21 @@ class UnitreeG1DirectEnv(gym.Env):
             raise ValueError(f"Expected action shape {(self.action_space.shape[0],)}, got {action.shape}.")
 
         arm_target = action[: self._arm_dof]
+        if hasattr(self._arm_ctrl, "clip_arm_q_target"):
+            velocity_limit = getattr(self._arm_ctrl, "arm_velocity_limit", None)
+            try:
+                # fall back to default limit if accessor not available
+                limit = float(velocity_limit) if velocity_limit is not None else None
+            except (TypeError, ValueError):
+                limit = None
+            try:
+                arm_target = self._arm_ctrl.clip_arm_q_target(
+                    arm_target,
+                    limit if limit is not None else 20.0,
+                )
+            except TypeError:
+                # older SDK signature without velocity argument
+                arm_target = self._arm_ctrl.clip_arm_q_target(arm_target)
         tau = self._arm_ik.solve_tau(arm_target)
         self._arm_ctrl.ctrl_dual_arm(arm_target, tau)
 
@@ -183,13 +198,39 @@ class UnitreeG1DirectEnv(gym.Env):
             The latest observation after executing the home action.
         """
         action = self._home_action.copy()
-        obs = None
-        for _ in range(max(1, steps)):
-            self._apply_action(action)
-            time.sleep(self._action_dt)
-            obs = self._compose_observation(self._read_robot_state())
-        if obs is None:
-            obs = self._compose_observation(self._read_robot_state())
+        if hasattr(self._arm_ctrl, "ctrl_dual_arm_go_home"):
+            try:
+                self._arm_ctrl.ctrl_dual_arm_go_home()
+            except Exception:
+                # fallback to time-based loop if controller call fails
+                obs = None
+                for _ in range(max(1, steps)):
+                    self._apply_action(action)
+                    time.sleep(self._action_dt)
+                    obs = self._compose_observation(self._read_robot_state())
+                if obs is None:
+                    obs = self._compose_observation(self._read_robot_state())
+            else:
+                obs = self._compose_observation(self._read_robot_state())
+        else:
+            obs = None
+            for _ in range(max(1, steps)):
+                self._apply_action(action)
+                time.sleep(self._action_dt)
+                obs = self._compose_observation(self._read_robot_state())
+            if obs is None:
+                obs = self._compose_observation(self._read_robot_state())
+
+        if self._has_dex3:
+            left = action[self._arm_dof : self._arm_dof + self._ee_dof]
+            right = action[self._arm_dof + self._ee_dof : self._arm_dof + 2 * self._ee_dof]
+            with self._ee_shared_mem["lock"]:
+                self._ee_shared_mem["left"][:] = left
+                self._ee_shared_mem["right"][:] = right
+                if "action" in self._ee_shared_mem:
+                    self._ee_shared_mem["action"][: self._ee_dof] = left
+                    self._ee_shared_mem["action"][self._ee_dof : 2 * self._ee_dof] = right
+
         self._last_action = action
         return obs
 
@@ -243,3 +284,14 @@ class UnitreeG1DirectEnv(gym.Env):
             self.go_home()
         except Exception:
             pass
+
+    # ------------------------------------------------------------------ controller hooks
+    def speed_gradual_max(self, duration: float = 5.0):
+        """Proxy to Unitree SDK speed ramp helper (if available)."""
+        if hasattr(self._arm_ctrl, "speed_gradual_max"):
+            self._arm_ctrl.speed_gradual_max(duration)
+
+    def speed_instant_max(self):
+        """Proxy to instantly unlock maximum arm velocity (if available)."""
+        if hasattr(self._arm_ctrl, "speed_instant_max"):
+            self._arm_ctrl.speed_instant_max()

@@ -92,8 +92,9 @@ which instantiates:
 
 During each step:
 
-1. The first 14 action values are passed through `solve_tau` and fed to
-   `ctrl_dual_arm`, matching the SDK2 torque workflow.
+1. The first 14 action values run through Unitree's `clip_arm_q_target`
+   (velocity-limited interpolation) before solving IK torques.
+2. The clipped targets and torques are sent to `ctrl_dual_arm`, matching the SDK2 workflow.
 2. The remaining values are written to the Dex3 shared memory, exactly like
    the official evaluation scripts (`ee_shared_mem["left"]` / `["right"]`).
 3. Observations are built from `arm_ctrl.get_current_dual_arm_q/dq()` and the
@@ -185,3 +186,17 @@ Tackle these steps in order to reach feature parity with the existing Franka pip
 releases a new URDF, re-run the extraction script (or update the table manually)
 so the environment clips actions to the official ranges for both the arms and
 the Dex3 hands.
+
+## Leveraging Unitree safety features
+
+`UnitreeG1DirectEnv` now proxies the velocity-limited interpolation
+(`clip_arm_q_target`), gradual speed ramp (`speed_gradual_max`), instant unlock
+(`speed_instant_max`), and SDK-provided go-home sequence
+(`ctrl_dual_arm_go_home`). When the controller exposes these helpers they are
+used automatically (e.g., during `step` and `close`), and you can call the
+wrapper methods directly for custom scripts:
+
+```python
+env.speed_gradual_max(duration=5.0)  # soft-start arm velocity limit
+env.speed_instant_max()              # jump to max velocity when needed
+```
