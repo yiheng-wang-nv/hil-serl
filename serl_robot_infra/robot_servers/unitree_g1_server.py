@@ -81,6 +81,22 @@ class UnitreeHTTPServer:
             info = dict(self._latest_info)
         return info
 
+    def go_home(self, steps: int = 200) -> Dict[str, list]:
+        with self._action_lock:
+            obs = self._env.go_home(steps=steps)
+            self._latest_obs = obs
+            self._last_action = self._env.get_home_action()
+            arm_pos = obs[:14]
+            dex_left = obs[14:21]
+            dex_right = obs[21:28]
+            arm_vel = obs[28:42]
+        return {
+            "arm_joint_positions": arm_pos.tolist(),
+            "dex3_left_joint_positions": dex_left.tolist(),
+            "dex3_right_joint_positions": dex_right.tolist(),
+            "arm_joint_velocities": arm_vel.tolist(),
+        }
+
 
 def create_app(server: UnitreeHTTPServer) -> Flask:
     app = Flask(__name__)
@@ -99,6 +115,13 @@ def create_app(server: UnitreeHTTPServer) -> Flask:
     @app.route("/get_state", methods=["GET"])
     def get_state():
         return jsonify(server.get_state())
+
+    @app.route("/go_home", methods=["POST"])
+    def go_home():
+        payload = request.get_json(force=True, silent=True) or {}
+        steps = int(payload.get("steps", 200))
+        state = server.go_home(steps=steps)
+        return jsonify({"status": "ok", "state": state})
 
     return app
 
