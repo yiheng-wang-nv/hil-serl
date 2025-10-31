@@ -41,6 +41,11 @@ env.close()  # automatically returns to the zero joint configuration before rele
 
 # If you only need the immediate robot state without issuing a new command:
 state = env.observe()
+
+# Optional safety wrapper (recommended for RL tasks):
+from serl_robot_infra.unitree_env import UnitreeSafetyWrapper
+safe_env = UnitreeSafetyWrapper(env, go_home_steps=200, soft_start_duration=5.0)
+obs, info = safe_env.reset()
 ```
 
 ### Joint ordering
@@ -74,7 +79,10 @@ entries.
 `UnitreeG1DirectEnv` clamps actions to the URDF-sourced limits, so RL agents are
 kept within the safe ranges defined by Unitree. The control loop sleeps for
 `action_dt` seconds between steps; the default `0.02` matches Unitree's 50 Hz
-examples (`examples/low_level/lowlevel_control.py`).
+examples (`examples/low_level/lowlevel_control.py`).  When you need a
+Franka-style reset experience, wrap the environment with
+`UnitreeSafetyWrapper` so every `reset()` performs a go-home, optional settle,
+and gradual speed unlock before returning control to the agent.
 
 Internally the environment calls:
 
