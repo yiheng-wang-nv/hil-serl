@@ -102,7 +102,12 @@ class UnitreeG1DirectEnv(gym.Env):
         )
 
         self._initial_state = self._read_robot_state(wait_for_hand=True)
-        self._last_action = np.zeros_like(self._initial_state.arm_position, dtype=np.float32)
+        initial_hand = self._initial_state.hand_position
+        if initial_hand.size == 0 and self._has_dex3:
+            initial_hand = np.zeros(self._ee_dof * 2, dtype=np.float32)
+        self._last_action = np.concatenate(
+            [self._initial_state.arm_position, initial_hand], dtype=np.float32
+        )
 
     # ------------------------------------------------------------------ helpers
     def _read_robot_state(self, wait_for_hand: bool = False) -> UnitreeRobotState:
@@ -145,6 +150,7 @@ class UnitreeG1DirectEnv(gym.Env):
                 if "action" in self._ee_shared_mem:
                     self._ee_shared_mem["action"][: self._ee_dof] = left
                     self._ee_shared_mem["action"][self._ee_dof : 2 * self._ee_dof] = right
+        self._last_action = action
 
     def _compose_observation(self, state: UnitreeRobotState) -> np.ndarray:
         hand_velocity = (
@@ -172,6 +178,7 @@ class UnitreeG1DirectEnv(gym.Env):
 
         time.sleep(self._action_dt)
         obs = self._compose_observation(self._read_robot_state())
+        self._last_action = obs[: self._arm_dof + self._ee_dof * 2].astype(np.float32, copy=True)
         info: Dict[str, float] = {}
         return obs, info
 
@@ -191,8 +198,24 @@ class UnitreeG1DirectEnv(gym.Env):
 
     def close(self):
         try:
-            arm_home = self._initial_state.arm_position
-            tau = self._arm_ik.solve_tau(arm_home)
-            self._arm_ctrl.ctrl_dual_arm(arm_home, tau)
+            action = np.asarray(self._last_action, dtype=np.float32)
+            if action.shape[0] != self.action_space.shape[0]:
+                action = np.clip(
+                    np.zeros(self.action_space.shape[0], dtype=np.float32),
+                    self.action_space.low,
+                    self.action_space.high,
+                )
+            arm_target = action[: self._arm_dof]
+            tau = self._arm_ik.solve_tau(arm_target)
+            self._arm_ctrl.ctrl_dual_arm(arm_target, tau)
+            if self._has_dex3:
+                left = action[self._arm_dof : self._arm_dof + self._ee_dof]
+                right = action[self._arm_dof + self._ee_dof : self._arm_dof + 2 * self._ee_dof]
+                with self._ee_shared_mem["lock"]:
+                    self._ee_shared_mem["left"][:] = left
+                    self._ee_shared_mem["right"][:] = right
+                    if "action" in self._ee_shared_mem:
+                        self._ee_shared_mem["action"][: self._ee_dof] = left
+                        self._ee_shared_mem["action"][self._ee_dof : 2 * self._ee_dof] = right
         except Exception:
             pass
