@@ -39,6 +39,9 @@ obs, reward, terminated, truncated, info = env.step(action)
 
 # Small non-zero commands move the arms and hands via the official SDK2 stack.
 env.close()  # automatically returns to the zero joint configuration before releasing control
+
+# If you only need the immediate robot state without issuing a new command:
+state = env.observe()
 ```
 
 ### Joint ordering

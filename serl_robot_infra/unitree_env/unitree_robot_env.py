@@ -167,6 +167,11 @@ class UnitreeG1DirectEnv(gym.Env):
         obs = np.concatenate([state.arm_position, state.hand_position, state.arm_velocity, hand_velocity])
         return obs.astype(np.float32)
 
+    def observe(self) -> np.ndarray:
+        """Return the latest robot observation without sending a new action."""
+        state = self._read_robot_state()
+        return self._compose_observation(state)
+
     def go_home(self, steps: int = 200) -> np.ndarray:
         """Command the robot to the zero joint configuration (arm + hand).
 
