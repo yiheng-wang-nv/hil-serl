@@ -34,10 +34,9 @@ obs, info = env.reset()
 print("observation shape:", obs.shape)
 
 # Action layout: [14 arm joints | 7 left-hand joints | 7 right-hand joints]
-action = np.zeros(28, dtype=np.float32)
+action = np.zeros(28, dtype=np.float32)  # replace with your own command vector
 obs, reward, terminated, truncated, info = env.step(action)
 
-# Small non-zero commands move the arms and hands via the official SDK2 stack.
 env.close()  # automatically returns to the zero joint configuration before releasing control
 
 # If you only need the immediate robot state without issuing a new command:
