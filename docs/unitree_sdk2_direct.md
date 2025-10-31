@@ -44,7 +44,12 @@ state = env.observe()
 
 # Optional safety wrapper (recommended for RL tasks):
 from serl_robot_infra.unitree_env import UnitreeSafetyWrapper
-safe_env = UnitreeSafetyWrapper(env, go_home_steps=200, soft_start_duration=5.0)
+safe_env = UnitreeSafetyWrapper(
+    env,
+    go_home_steps=200,
+    settle_time=0.5,
+    soft_start_duration=5.0,
+)
 obs, info = safe_env.reset()
 ```
 
@@ -82,7 +87,11 @@ kept within the safe ranges defined by Unitree. The control loop sleeps for
 examples (`examples/low_level/lowlevel_control.py`).  When you need a
 Franka-style reset experience, wrap the environment with
 `UnitreeSafetyWrapper` so every `reset()` performs a go-home, optional settle,
-and gradual speed unlock before returning control to the agent.
+and gradual speed unlock before returning control to the agent. The wrapper also
+tracks DDS heartbeats, controller ownership, and motor fault codes; if an
+anomaly is detected it attempts to release the current mode, return to the safe
+pose, re-select the control mode, and restart the soft-start sequence before
+continuing.
 
 Internally the environment calls:
 
