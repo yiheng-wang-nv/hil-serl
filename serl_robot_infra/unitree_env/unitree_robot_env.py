@@ -105,14 +105,17 @@ class UnitreeG1DirectEnv(gym.Env):
         initial_hand = self._initial_state.hand_position
         if initial_hand.size == 0 and self._has_dex3:
             initial_hand = np.zeros(self._ee_dof * 2, dtype=np.float32)
-        self._home_action = np.concatenate(
+        initial_action = np.concatenate(
             [self._initial_state.arm_position, initial_hand]
         ).astype(np.float32, copy=True)
-        if self._home_action.shape[0] != self.action_space.shape[0]:
+        if initial_action.shape[0] != self.action_space.shape[0]:
             pad = np.zeros(self.action_space.shape[0], dtype=np.float32)
-            pad[: self._home_action.shape[0]] = self._home_action
-            self._home_action = pad
-        self._last_action = self._home_action.copy()
+            pad[: initial_action.shape[0]] = initial_action
+            initial_action = pad
+        self._initial_action = initial_action
+        self._last_action = self._initial_action.copy()
+
+        self._home_action = np.zeros(self.action_space.shape[0], dtype=np.float32)
 
     # ------------------------------------------------------------------ helpers
     def _read_robot_state(self, wait_for_hand: bool = False) -> UnitreeRobotState:
@@ -165,7 +168,7 @@ class UnitreeG1DirectEnv(gym.Env):
         return obs.astype(np.float32)
 
     def go_home(self, steps: int = 200) -> np.ndarray:
-        """Command the robot back to the pose recorded at environment construction.
+        """Command the robot to the zero joint configuration (arm + hand).
 
         Args:
             steps: Number of control iterations to run while holding the home pose.
@@ -186,8 +189,12 @@ class UnitreeG1DirectEnv(gym.Env):
         return obs
 
     def get_home_action(self) -> np.ndarray:
-        """Return a copy of the recorded home action (arm + hand joint targets)."""
+        """Return a copy of the all-zero home action (arm + hand joint targets)."""
         return self._home_action.copy()
+
+    def get_initial_action(self) -> np.ndarray:
+        """Return the nominal initial action captured at environment construction."""
+        return self._initial_action.copy()
 
     # ------------------------------------------------------------------ gym API
     def reset(self, *, seed: Optional[int] = None, options: Optional[Dict] = None):
@@ -208,7 +215,7 @@ class UnitreeG1DirectEnv(gym.Env):
 
         time.sleep(self._action_dt)
         obs = self._compose_observation(self._read_robot_state())
-        self._last_action = self._home_action.copy()
+        self._last_action = self._initial_action.copy()
         info: Dict[str, float] = {}
         return obs, info
 
