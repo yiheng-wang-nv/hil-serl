@@ -119,8 +119,14 @@ class UnitreeG1DirectEnv(gym.Env):
 
     # ------------------------------------------------------------------ helpers
     def _read_robot_state(self, wait_for_hand: bool = False) -> UnitreeRobotState:
-        arm_pos = np.asarray(self._arm_ctrl.get_current_dual_arm_q(), dtype=np.float32)
-        arm_vel = np.asarray(self._arm_ctrl.get_current_dual_arm_dq(), dtype=np.float32)
+        try:
+            arm_pos = np.asarray(self._arm_ctrl.get_current_dual_arm_q(), dtype=np.float32)
+        except AttributeError:
+            arm_pos = self._last_action[: self._arm_dof]
+        try:
+            arm_vel = np.asarray(self._arm_ctrl.get_current_dual_arm_dq(), dtype=np.float32)
+        except AttributeError:
+            arm_vel = np.zeros_like(arm_pos)
 
         if self._has_dex3:
             start = time.time()
@@ -146,7 +152,9 @@ class UnitreeG1DirectEnv(gym.Env):
             raise ValueError(f"Expected action shape {(self.action_space.shape[0],)}, got {action.shape}.")
 
         arm_target = action[: self._arm_dof]
-        if hasattr(self._arm_ctrl, "clip_arm_q_target"):
+        buffer = getattr(self._arm_ctrl, "lowstate_buffer", None)
+        lowstate_available = buffer is not None and buffer.GetData() is not None
+        if lowstate_available and hasattr(self._arm_ctrl, "clip_arm_q_target"):
             velocity_limit = getattr(self._arm_ctrl, "arm_velocity_limit", None)
             try:
                 # fall back to default limit if accessor not available
