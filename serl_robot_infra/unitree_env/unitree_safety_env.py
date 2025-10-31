@@ -50,6 +50,13 @@ class UnitreeSafetyWrapper(gym.Wrapper):
     ):
         obs, info = self.env.reset(seed=seed, options=options)
 
+        # Basic liveness check before issuing go-home.
+        if not self._check_lowstate_alive():
+            self.env.go_home(steps=self._go_home_steps)
+            time.sleep(self._settle_time)
+            obs = self.env.observe()
+            return obs, info if info is not None else {}
+
         # Drive both arms (and Dex3) to the all-zero joint configuration.
         obs = self.env.go_home(steps=self._go_home_steps)
         if self._settle_time > 0.0:
@@ -62,6 +69,9 @@ class UnitreeSafetyWrapper(gym.Wrapper):
         if info is None:
             info = {}
         info["safety_reset"] = True
+        if info is None:
+            info = {}
+        info["safety_reset"] = True
         return obs, info
 
     def close(self) -> None:
@@ -69,3 +79,13 @@ class UnitreeSafetyWrapper(gym.Wrapper):
             self.env.go_home(steps=self._go_home_steps)
         finally:
             super().close()
+
+    # ------------------------------------------------------------------ helpers
+    def _check_lowstate_alive(self) -> bool:
+        """Return True if the Unitree controller reports fresh lowstate data."""
+        ctrl = getattr(self.env, "_arm_ctrl", None)
+        if ctrl is None:
+            return True
+        buf = getattr(ctrl, "lowstate_buffer", None)
+        data = buf.GetData() if buf is not None else None
+        return data is not None
