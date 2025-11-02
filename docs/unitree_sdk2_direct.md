@@ -53,6 +53,29 @@ safe_env = UnitreeSafetyWrapper(
 obs, info = safe_env.reset()
 ```
 
+### Attaching camera streams
+
+If you need RGB observations (for example to finetune a VLA policy on top of the Unitree deployment stack) wrap the base environment with the new vision helper:
+
+```python
+from serl_robot_infra.unitree_env import UnitreeVisionWrapper
+
+env = UnitreeG1DirectEnv(arm="G1_29", ee="dex3", simulation=True)
+vision_env = UnitreeVisionWrapper(env)
+
+obs, info = vision_env.reset()
+print(obs.keys())
+# dict_keys(['robot_state', 'video.room_view', 'video.room_view_left',
+#            'video.room_view_right', 'video.left_wrist_view', 'video.right_wrist_view'])
+
+action = np.zeros(28, dtype=np.float32)
+obs, reward, terminated, truncated, info = vision_env.step(action)
+
+vision_env.close()
+```
+
+`UnitreeVisionWrapper` reuses `unitree_lerobot`'s `setup_image_client`, so the frames match the official teleoperation and evaluation pipelines.  Closing the wrapper releases the shared-memory buffers used by the camera client.
+
 ### Joint ordering
 
 | Segment | Indices | Description |

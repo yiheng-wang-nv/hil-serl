@@ -86,6 +86,7 @@ class UnitreeG1DirectEnv(gym.Env):
         self._ee_dof: int = int(robot_if.get("ee_dof", 0))
         self._has_dex3: bool = self._ee_dof > 0 and self._ee_shared_mem is not None
 
+        self._simulation_mode = bool(simulation)
         self._action_dt = float(action_dt)
 
         # Per-joint bounds are loaded from `joint_limits.py`, which mirrors the URDF limits in
@@ -292,6 +293,12 @@ class UnitreeG1DirectEnv(gym.Env):
             self.go_home()
         except Exception:
             pass
+
+    # ------------------------------------------------------------------ public helpers
+    @property
+    def simulation_mode(self) -> bool:
+        """Return True when the environment is connected to the simulator DDS channel."""
+        return self._simulation_mode
 
     # ------------------------------------------------------------------ controller hooks
     def speed_gradual_max(self, duration: float = 5.0):
