@@ -42,6 +42,7 @@ class UnitreeSafetyWrapper(gym.Wrapper):
         self._health_timeout = health_timeout
 
         self._last_lowstate_stamp = time.monotonic()
+        self._last_lowstate_tick = None
         self._recovering = False
         self._motion_switcher = None
         self._monitor_control_mode = False
@@ -86,7 +87,10 @@ class UnitreeSafetyWrapper(gym.Wrapper):
         now = time.monotonic()
         data = self._get_lowstate_data(ctrl)
         if data is not None:
-            self._last_lowstate_stamp = now
+            current_tick = getattr(data, "tick", None)
+            if current_tick is None or current_tick != self._last_lowstate_tick:
+                self._last_lowstate_stamp = now
+                self._last_lowstate_tick = current_tick
             motor_states = getattr(data, "motor_state", None)
             if motor_states is not None:
                 arm_dof = getattr(ctrl, "arm_dof", 14)
@@ -152,6 +156,7 @@ class UnitreeSafetyWrapper(gym.Wrapper):
         data = self._get_lowstate_data(ctrl)
         if data is not None:
             self._last_lowstate_stamp = time.monotonic()
+            self._last_lowstate_tick = getattr(data, "tick", None)
 
     def _get_lowstate_data(self, ctrl):
         buf = getattr(ctrl, "lowstate_buffer", None)
@@ -166,6 +171,7 @@ class UnitreeSafetyWrapper(gym.Wrapper):
             data = self._get_lowstate_data(ctrl)
             if data is not None:
                 self._last_lowstate_stamp = time.monotonic()
+                self._last_lowstate_tick = getattr(data, "tick", None)
                 return True
             time.sleep(0.02)
         return False
