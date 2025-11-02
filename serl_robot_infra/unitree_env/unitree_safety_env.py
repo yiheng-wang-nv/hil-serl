@@ -44,6 +44,7 @@ class UnitreeSafetyWrapper(gym.Wrapper):
         self._last_lowstate_stamp = time.monotonic()
         self._recovering = False
         self._motion_switcher = None
+        self._monitor_control_mode = False
 
     # ------------------------------------------------------------------ gym API
     def reset(
@@ -54,6 +55,7 @@ class UnitreeSafetyWrapper(gym.Wrapper):
     ):
         obs, info = self.env.reset(seed=seed, options=options)
         self._snapshot_lowstate()
+        self._init_mode_monitor()
 
         obs = self._drive_home()
         self._apply_soft_start()
@@ -103,7 +105,7 @@ class UnitreeSafetyWrapper(gym.Wrapper):
                 mode_machine = ctrl.get_mode_machine()
             except Exception:
                 mode_machine = None
-        if mode_machine in (None, 0):
+        if self._monitor_control_mode and mode_machine in (None, 0):
             if self._get_motion_switcher() is not None:
                 self._recover("control mode lost")
 
@@ -137,6 +139,7 @@ class UnitreeSafetyWrapper(gym.Wrapper):
 
             self._apply_soft_start()
             self._wait_for_lowstate(timeout=1.0)
+            self._init_mode_monitor()
             print("[UnitreeSafetyWrapper] Recovery complete.")
         finally:
             self._recovering = False
@@ -181,6 +184,22 @@ class UnitreeSafetyWrapper(gym.Wrapper):
             except Exception:
                 self._motion_switcher = False
         return self._motion_switcher if self._motion_switcher is not False else None
+
+    def _init_mode_monitor(self):
+        ctrl = getattr(self.env, "_arm_ctrl", None)
+        self._monitor_control_mode = False
+        if ctrl is None:
+            return
+        switcher = self._get_motion_switcher()
+        if switcher is None:
+            return
+        if hasattr(ctrl, "get_mode_machine"):
+            try:
+                mode_machine = ctrl.get_mode_machine()
+            except Exception:
+                mode_machine = None
+            if mode_machine not in (None, 0):
+                self._monitor_control_mode = True
 
     # ------------------------------------------------------------------ control helpers
     def _drive_home(self):
