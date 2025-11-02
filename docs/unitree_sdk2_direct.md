@@ -82,7 +82,7 @@ If you have demonstrations stored with LeRobot, use the helper script to reprodu
 
 ```bash
 python scripts/unitree_replay.py \
-    --repo-id your_org/unitree_g1_demo \
+    --repo-id i4h/install_trocar \
     --episode 0 \
     --simulation \
     --frequency 50
