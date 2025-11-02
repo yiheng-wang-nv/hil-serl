@@ -99,7 +99,10 @@ class UnitreeSafetyWrapper(gym.Wrapper):
                     if fault:
                         self._recover(f"motor {idx} fault code {fault}")
                         return
-        elif now - self._last_lowstate_stamp > self._health_timeout:
+        elif (
+            self._health_timeout is not None
+            and now - self._last_lowstate_stamp > self._health_timeout
+        ):
             self._recover("lowstate heartbeat stalled")
             return
 
