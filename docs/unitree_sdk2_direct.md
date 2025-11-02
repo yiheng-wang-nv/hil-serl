@@ -76,6 +76,20 @@ vision_env.close()
 
 `UnitreeVisionWrapper` reuses `unitree_lerobot`'s `setup_image_client`, so the frames match the official teleoperation and evaluation pipelines.  Closing the wrapper releases the shared-memory buffers used by the camera client.
 
+### Replaying a recorded episode
+
+If you have demonstrations stored with LeRobot, use the helper script to reproduce them on the simulator or a real robot:
+
+```bash
+python scripts/unitree_replay.py \
+    --repo-id your_org/unitree_g1_demo \
+    --episode 0 \
+    --simulation \
+    --frequency 50
+```
+
+The script loads the specified episode, aligns the robot with the recorded initial pose, then streams the stored joint targets at the requested control frequency.  Pass `--vision` if you want the replay loop to expose camera observations (useful for sanity checks) and `--no-safety` if you need to bypass the safety wrapper for debugging.
+
 ### Joint ordering
 
 | Segment | Indices | Description |
