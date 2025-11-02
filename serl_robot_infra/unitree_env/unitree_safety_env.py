@@ -104,7 +104,8 @@ class UnitreeSafetyWrapper(gym.Wrapper):
             except Exception:
                 mode_machine = None
         if mode_machine in (None, 0):
-            self._recover("control mode lost")
+            if self._get_motion_switcher() is not None:
+                self._recover("control mode lost")
 
     # ------------------------------------------------------------------ recovery helpers
     def _recover(self, reason: str):
@@ -169,6 +170,8 @@ class UnitreeSafetyWrapper(gym.Wrapper):
     def _get_motion_switcher(self):
         if MotionSwitcherClient is None:
             return None
+        if self._motion_switcher is False:
+            return None
         if self._motion_switcher is None:
             try:
                 client = MotionSwitcherClient()
@@ -176,8 +179,8 @@ class UnitreeSafetyWrapper(gym.Wrapper):
                 client.Init()
                 self._motion_switcher = client
             except Exception:
-                self._motion_switcher = None
-        return self._motion_switcher
+                self._motion_switcher = False
+        return self._motion_switcher if self._motion_switcher is not False else None
 
     # ------------------------------------------------------------------ control helpers
     def _drive_home(self):
