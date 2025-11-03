@@ -76,7 +76,7 @@ vision_env.close()
 If you have demonstrations stored with LeRobot, use the helper script to reproduce them on the simulator or a real robot:
 
 ```bash
-python scripts/unitree_replay.py \
+python unitree_examples/unitree_replay.py \
     --repo-id i4h/install_trocar \
     --episode 0 \
     --simulation \

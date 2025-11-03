@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from experiments.config import DefaultTrainingConfig
+from examples.experiments.config import DefaultTrainingConfig
 from .wrapper import UnitreeAssembleEnvConfig, make_unitree_assemble_env
 
 
