@@ -13,7 +13,10 @@ from types import SimpleNamespace
 from typing import Any, Dict, Optional
 
 import gymnasium as gym
+from gymnasium import spaces
 import numpy as np
+
+from .unitree_safety_env import UnitreeSafetyWrapper
 
 
 class UnitreeImageClient:
@@ -94,6 +97,22 @@ class UnitreeImageClient:
                 shm.unlink()
         self._shm_resources.clear()
 
+    @property
+    def tv_img_shape(self):
+        return self._tv_img_shape
+
+    @property
+    def wrist_img_shape(self):
+        return self._wrist_img_shape
+
+    @property
+    def is_binocular(self) -> bool:
+        return self._is_binocular
+
+    @property
+    def has_wrist_cam(self) -> bool:
+        return self._has_wrist_cam
+
 
 class UnitreeVisionWrapper(gym.Wrapper):
     """Augment :class:`UnitreeG1DirectEnv` observations with camera frames."""
@@ -105,12 +124,53 @@ class UnitreeVisionWrapper(gym.Wrapper):
         simulation: Optional[bool] = None,
         image_args: Optional[SimpleNamespace] = None,
         copy_images: bool = True,
+        enable_safety: bool = True,
+        safety_kwargs: Optional[Dict[str, Any]] = None,
     ) -> None:
-        super().__init__(env)
+        base_env = env
+        wrapped_env = env
+        if enable_safety and not isinstance(env, UnitreeSafetyWrapper):
+            wrapped_env = UnitreeSafetyWrapper(env, **(safety_kwargs or {}))
+
+        super().__init__(wrapped_env)
+
+        raw_env = wrapped_env.unwrapped
         if simulation is None:
-            simulation = bool(getattr(env, "simulation_mode", False))
+            simulation = bool(getattr(raw_env, "simulation_mode", False))
         self._image_client = UnitreeImageClient(simulation=simulation, image_args=image_args)
         self._copy_images = copy_images
+        self._base_env = base_env
+
+        # Build observation space dict
+        robot_state_space = getattr(wrapped_env, "observation_space", None)
+        if robot_state_space is None:
+            robot_state_space = spaces.Box(-np.inf, np.inf, shape=raw_env.observation_space.shape, dtype=np.float32)
+
+        obs_spaces: Dict[str, spaces.Space] = {
+            "robot_state": robot_state_space,
+            "video.room_view": spaces.Box(
+                low=0,
+                high=255,
+                shape=self._image_client.tv_img_shape,
+                dtype=np.uint8,
+            ),
+        }
+
+        if self._image_client.is_binocular and self._image_client.tv_img_shape is not None:
+            room_shape = self._image_client.tv_img_shape
+            half_width = room_shape[1] // 2
+            split_shape = (room_shape[0], half_width, room_shape[2])
+            obs_spaces["video.room_view_left"] = spaces.Box(0, 255, shape=split_shape, dtype=np.uint8)
+            obs_spaces["video.room_view_right"] = spaces.Box(0, 255, shape=split_shape, dtype=np.uint8)
+
+        if self._image_client.has_wrist_cam and self._image_client.wrist_img_shape is not None:
+            wrist_shape = self._image_client.wrist_img_shape
+            half_width = wrist_shape[1] // 2
+            split_shape = (wrist_shape[0], half_width, wrist_shape[2])
+            obs_spaces["video.left_wrist_view"] = spaces.Box(0, 255, shape=split_shape, dtype=np.uint8)
+            obs_spaces["video.right_wrist_view"] = spaces.Box(0, 255, shape=split_shape, dtype=np.uint8)
+
+        self.observation_space = spaces.Dict(obs_spaces)
 
     def reset(self, *, seed: Optional[int] = None, options: Optional[Dict[str, Any]] = None):
         robot_obs, info = self.env.reset(seed=seed, options=options)
@@ -136,4 +196,3 @@ class UnitreeVisionWrapper(gym.Wrapper):
         obs: Dict[str, Any] = {"robot_state": robot_obs}
         obs.update(self._image_client.get_latest_frames(copy=self._copy_images))
         return obs
-

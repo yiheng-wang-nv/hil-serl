@@ -42,14 +42,9 @@ env.close()  # automatically returns to the zero joint configuration before rele
 # If you only need the immediate robot state without issuing a new command:
 state = env.observe()
 
-# Optional safety wrapper (recommended for RL tasks):
+# If you need safety guarding without cameras:
 from serl_robot_infra.unitree_env import UnitreeSafetyWrapper
-safe_env = UnitreeSafetyWrapper(
-    env,
-    go_home_steps=200,
-    settle_time=0.5,
-    soft_start_duration=5.0,
-)
+safe_env = UnitreeSafetyWrapper(env)
 obs, info = safe_env.reset()
 ```
 
@@ -61,7 +56,7 @@ If you need RGB observations (for example to finetune a VLA policy on top of the
 from serl_robot_infra.unitree_env import UnitreeVisionWrapper
 
 env = UnitreeG1DirectEnv(arm="G1_29", ee="dex3", simulation=True)
-vision_env = UnitreeVisionWrapper(env)
+vision_env = UnitreeVisionWrapper(env)  # safety is enabled by default
 
 obs, info = vision_env.reset()
 print(obs.keys())
@@ -74,7 +69,7 @@ obs, reward, terminated, truncated, info = vision_env.step(action)
 vision_env.close()
 ```
 
-`UnitreeVisionWrapper` reuses `unitree_lerobot`'s `setup_image_client`, so the frames match the official teleoperation and evaluation pipelines.  Closing the wrapper releases the shared-memory buffers used by the camera client.
+`UnitreeVisionWrapper` reuses `unitree_lerobot`'s `setup_image_client`, so the frames match the official teleoperation and evaluation pipelines.  The wrapper also enables the safety layer by default; pass `enable_safety=False` if you deliberately want to bypass it. Closing the wrapper releases the shared-memory buffers used by the camera client.
 
 ### Replaying a recorded episode
 
