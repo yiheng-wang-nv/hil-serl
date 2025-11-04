@@ -20,6 +20,7 @@ class UnitreeXRIntervention(gym.Wrapper):
     def __init__(self, env: gym.Env) -> None:
         super().__init__(env)
         self._last_seq = 0.0
+        self._speed_unlocked = False
 
     def reset(self, *, seed: Optional[int] = None, options: Optional[dict] = None):
         obs, info = self.env.reset(seed=seed, options=options)
@@ -33,6 +34,15 @@ class UnitreeXRIntervention(gym.Wrapper):
 
         if updated:
             candidate = override
+            if not self._speed_unlocked:
+                controller = self.env.unwrapped
+                speed_fn = getattr(controller, "speed_instant_max", None)
+                if callable(speed_fn):
+                    try:
+                        speed_fn()
+                    except Exception:
+                        pass
+                self._speed_unlocked = True
 
         teleop_action = vector_to_teleop_action(candidate)
         action_vector = np.asarray(candidate, dtype=np.float32).copy()
