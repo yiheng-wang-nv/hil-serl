@@ -4,6 +4,7 @@ setup(
     name="serl_robot_infra",
     version="0.0.1",
     packages=find_packages(),
+    py_modules=["serl_robot_infra"],
     install_requires=[
         "gymnasium",
         "pyrealsense2",

@@ -1,6 +1,6 @@
-"""Top-level namespace for shared robot infrastructure."""
+"""Convenience namespace for shared robot infrastructure."""
 
-from .unitree_env import (
+from unitree_env import (  # noqa: F401
     UnitreeG1DirectEnv,
     UnitreeSafetyWrapper,
     UnitreeVisionWrapper,
