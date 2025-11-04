@@ -1,20 +1,74 @@
 # Unitree G1 + Dex3: Direct SDK2 Interface
 
 This note describes how to control Unitree G1 (29 DoF) with the Dex3 end-effector from HIL-SERL by reusing the official Unitree control stack. Actions are converted to joint torques through Unitree's IK solver and the Dex3 commands flow through the dedicated shared-memory interface used by `Dex3_1_Controller`.
-## Prerequisites
 
-1. Install Unitree's SDK2 in the same environment that runs HIL-SERL:
+## Environment setup
+
+1. **Create/activate Conda environment**
    ```bash
-   cd /localhome/local-vennw/code/unitree_sdk2_python
+   conda create -n hilserl python=3.10
+   conda activate hilserl
+   ```
+
+2. **Install JAX (CUDA 12 build)**
+   ```bash
+   pip install --upgrade "jax[cuda12_pip]==0.4.35" -i https://pypi.tuna.tsinghua.edu.cn/simple
+   ```
+
+3. **Install SERL Launcher**
+   ```bash
+   cd serl_launcher
+   pip install -e .
+   pip install -r requirements.txt
+   cd ..
+   ```
+
+4. **Install Unitree SDK2 Python bindings**
+   ```bash
+   cd unitree_sdk2_python
+   pip install -e .
+   cd ..
+   ```
+
+5. **Install remaining Python dependencies**
+   ```bash
+   pip install flask
+   ```
+
+6. **Install Unitree LeRobot fork (Dex3 support)**
+   Follow the instructions at https://github.com/yiheng-wang-nv/unitree_IL_lerobot/tree/3-camera-eval and install it in editable mode inside the same environment.
+
+7. **Install HIL-SERL itself**
+   ```bash
    pip install -e .
    ```
 
-2. install `unitree_IL_lerobot` in the environment:
+### Optional: install Unitree XR teleoperation in the same environment
 
-   refer to: https://github.com/yiheng-wang-nv/unitree_IL_lerobot/tree/3-camera-eval
+If you plan to drive the robot with Unitree's XR controllers and stream actions into HIL‑SERL, install `xr_teleoperate` inside the *same* Conda env. The official instructions boil down to:
 
-3. Start the Unitree simulator or connect to a real robot so that the SDK2 DDS
-   topics are active.  Wait for the log line `DDS communication initialized`.
+```bash
+conda install -c conda-forge pinocchio=3.1.0 numpy=1.26.4
+git clone https://github.com/unitreerobotics/xr_teleoperate.git
+cd xr_teleoperate
+git submodule update --init --depth 1
+
+cd teleop/televuer
+pip install -e .
+openssl req -x509 -nodes -days 365 -newkey rsa:2048 -keyout key.pem -out cert.pem
+
+cd ../robot_control/dex-retargeting
+pip install -e .
+
+cd ../../../
+pip install -r requirements.txt
+cd ..
+```
+
+With both repositories installed in editable mode, the teleop scripts can call `publish_xr_action(...)`, and HIL‑SERL can pick up the commands without additional path tweaks.
+## Prerequisites
+
+Start the Unitree simulator or connect to a real robot so that the SDK2 DDS topics are active.  Wait for the log line `DDS communication initialized`.
 
 ## Quick start
 
@@ -70,6 +124,20 @@ vision_env.close()
 ```
 
 `UnitreeVisionWrapper` reuses `unitree_lerobot`'s `setup_image_client`, so the frames match the official teleoperation and evaluation pipelines.  The wrapper also enables the safety layer by default; pass `enable_safety=False` if you deliberately want to bypass it. Closing the wrapper releases the shared-memory buffers used by the camera client.
+
+### XR teleoperation bridge
+
+To feed actions from `xr_teleoperate` into HIL-SERL, import the helper once per control loop and publish the 28-D joint vector after you compute it:
+
+```python
+from serl_robot_infra.unitree_env import publish_xr_action
+
+publish_xr_action(joint_targets)  # numpy array shaped (28,)
+```
+
+`UnitreeXRIntervention` (enabled automatically in the Unitree assemble experiment) picks up the latest command, replaces the action passed to `env.step`, and records it in `info["intervene_action"]`.  `unitree_record_demos.py` then captures those actions alongside observations, keeping teleop and demonstrations in sync.
+
+（确保运行遥操作脚本的 Python 环境已经 `pip install -e hil-serl` 或把仓库根目录加入 `PYTHONPATH`，这样 `serl_robot_infra` 才能被正确导入。）
 
 ### Replaying a recorded episode
 

@@ -1,0 +1,49 @@
+"""Wrapper that injects XR teleop actions into Unitree environments."""
+
+from __future__ import annotations
+
+from typing import Optional
+
+import gymnasium as gym
+import numpy as np
+
+from serl_robot_infra.unitree_env.xr_action_bridge import (
+    close_bridge,
+    fetch_latest_action,
+)
+
+
+class UnitreeXRIntervention(gym.Wrapper):
+    """Replace actions with XR teleoperation inputs when available."""
+
+    def __init__(self, env: gym.Env) -> None:
+        super().__init__(env)
+        self._last_seq = 0.0
+
+    def reset(self, *, seed: Optional[int] = None, options: Optional[dict] = None):
+        obs, info = self.env.reset(seed=seed, options=options)
+        info = dict(info)
+        info.setdefault("intervene_action", None)
+        return obs, info
+
+    def step(self, action):
+        candidate = np.asarray(action, dtype=np.float32)
+        override, updated, self._last_seq = fetch_latest_action(self._last_seq)
+        info_override = None
+
+        if updated:
+            candidate = override
+            info_override = override
+
+        candidate = np.clip(candidate, self.action_space.low, self.action_space.high)
+
+        obs, reward, terminated, truncated, info = self.env.step(candidate)
+        info = dict(info)
+        info.setdefault("intervene_action", info_override)
+        return obs, reward, terminated, truncated, info
+
+    def close(self) -> None:
+        try:
+            close_bridge()
+        finally:
+            super().close()

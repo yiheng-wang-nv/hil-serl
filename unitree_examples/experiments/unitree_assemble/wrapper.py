@@ -5,6 +5,7 @@ from typing import Dict, Optional
 
 import gymnasium as gym
 
+from unitree_examples.interventions import UnitreeXRIntervention
 from serl_robot_infra.unitree_env import UnitreeG1DirectEnv, UnitreeVisionWrapper
 
 
@@ -65,6 +66,8 @@ def make_unitree_assemble_env(config: UnitreeAssembleEnvConfig) -> gym.Env:
         enable_safety=config.use_safety,
         safety_kwargs=safety_kwargs,
     )
+
+    env = UnitreeXRIntervention(env)
     env = EpisodeLimitWrapper(env, max_episode_steps=config.max_episode_steps)
 
     env = UnitreeAssembleTaskWrapper(env)
