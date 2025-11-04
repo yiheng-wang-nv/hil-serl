@@ -5,6 +5,7 @@ import pickle as pkl
 import threading
 
 import numpy as np
+from pathlib import Path
 from absl import app, flags
 from pynput import keyboard
 from tqdm import tqdm
@@ -106,15 +107,15 @@ def main(_):
     env = config.get_environment(fake_env=False, save_video=False, classifier=False)
 
     obs, info = env.reset()
-    success_segments = []
-    failure_segments = []
+    success_segments: list = []
+    failure_segments: list = []
     success_goal = FLAGS.successes_needed
     pbar = tqdm(total=success_goal)
 
     _print("Controls: 's' start recording, 'e' end recording, '1' success, '0' failure. Press Ctrl+C to exit.")
 
     try:
-        while len(successes) < success_goal:
+        while len(success_segments) < success_goal:
             action_vector = np.zeros(env.action_space.shape, dtype=np.float32)
             if isinstance(info, dict) and "intervene_action_vector" in info:
                 action_vector = np.asarray(info["intervene_action_vector"], dtype=np.float32)
@@ -137,11 +138,11 @@ def main(_):
 
                 while label_queue:
                     label, segment = label_queue.pop(0)
-                if label == "success":
-                    success_segments.append(segment)
-                    pbar.update(1)
-                else:
-                    failure_segments.append(segment)
+                    if label == "success":
+                        success_segments.append(segment)
+                        pbar.update(1)
+                    else:
+                        failure_segments.append(segment)
 
             obs = next_obs
 
