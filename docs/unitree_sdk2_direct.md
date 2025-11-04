@@ -38,9 +38,11 @@ This note describes how to control Unitree G1 (29 DoF) with the Dex3 end-effecto
 6. **Install Unitree LeRobot fork (Dex3 support)**
    Follow the instructions at https://github.com/yiheng-wang-nv/unitree_IL_lerobot/tree/3-camera-eval and install it in editable mode inside the same environment.
 
-7. **Install HIL-SERL itself**
+7. **Install the shared infrastructure package**
    ```bash
+   cd serl_robot_infra
    pip install -e .
+   cd ..
    ```
 
 ### Optional: install Unitree XR teleoperation in the same environment
