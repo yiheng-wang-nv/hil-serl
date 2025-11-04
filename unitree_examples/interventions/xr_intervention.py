@@ -11,6 +11,7 @@ from serl_robot_infra.unitree_env.xr_action_bridge import (
     close_bridge,
     fetch_latest_action,
 )
+from unitree_examples.utils import vector_to_teleop_action
 
 
 class UnitreeXRIntervention(gym.Wrapper):
@@ -29,17 +30,20 @@ class UnitreeXRIntervention(gym.Wrapper):
     def step(self, action):
         candidate = np.asarray(action, dtype=np.float32)
         override, updated, self._last_seq = fetch_latest_action(self._last_seq)
-        info_override = None
 
         if updated:
             candidate = override
-            info_override = override
+
+        teleop_action = vector_to_teleop_action(candidate)
+        action_vector = np.asarray(candidate, dtype=np.float32).copy()
 
         candidate = np.clip(candidate, self.action_space.low, self.action_space.high)
 
         obs, reward, terminated, truncated, info = self.env.step(candidate)
         info = dict(info)
-        info.setdefault("intervene_action", info_override)
+        info["intervene_action"] = teleop_action
+        info["intervene_action_vector"] = action_vector
+        info["intervene_override"] = updated
         return obs, reward, terminated, truncated, info
 
     def close(self) -> None:

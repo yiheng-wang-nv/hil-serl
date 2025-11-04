@@ -18,7 +18,6 @@ pip install flask
 cd serl_robot_infra && pip install -e . && cd ..
 
 # optional: install XR teleoperation in the same env
-conda install -c conda-forge pinocchio=3.1.0 numpy=1.26.4
 cd ..
 git clone https://github.com/unitreerobotics/xr_teleoperate.git
 cd xr_teleoperate

@@ -16,6 +16,7 @@ from absl import flags
 from tqdm import tqdm
 
 from unitree_examples.mappings import CONFIG_MAPPING
+from unitree_examples.utils import observation_to_teleop, vector_to_teleop_action
 
 FLAGS = flags.FLAGS
 
@@ -58,18 +59,22 @@ def main(_) -> None:
     progress = tqdm(total=success_goal)
 
     while successes < success_goal:
-        action = _default_action(env)
-        if isinstance(info, dict) and "intervene_action" in info and info["intervene_action"] is not None:
-            action = np.asarray(info["intervene_action"], dtype=np.float32)
+        action_vector = _default_action(env)
+        if isinstance(info, dict) and "intervene_action_vector" in info:
+            action_vector = np.asarray(info["intervene_action_vector"], dtype=np.float32)
 
-        next_obs, reward, terminated, truncated, info = env.step(action)
+        next_obs, reward, terminated, truncated, info = env.step(action_vector)
         returns += reward
+
+        teleop_action = info.get("intervene_action")
+        if teleop_action is None:
+            teleop_action = vector_to_teleop_action(action_vector)
 
         transition = copy.deepcopy(
             dict(
-                observations=obs,
-                actions=action,
-                next_observations=next_obs,
+                observations=observation_to_teleop(obs),
+                actions=teleop_action,
+                next_observations=observation_to_teleop(next_obs),
                 rewards=reward,
                 dones=terminated,
                 truncated=truncated,
