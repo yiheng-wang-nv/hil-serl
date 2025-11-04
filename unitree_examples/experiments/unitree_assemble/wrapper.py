@@ -9,39 +9,12 @@ from unitree_examples.interventions import UnitreeXRIntervention
 from serl_robot_infra.unitree_env import UnitreeG1DirectEnv, UnitreeVisionWrapper
 
 
-class EpisodeLimitWrapper(gym.Wrapper):
-    """Simple wrapper that truncates an episode after a fixed number of steps."""
-
-    def __init__(self, env: gym.Env, max_episode_steps: int) -> None:
-        super().__init__(env)
-        self._max_episode_steps = int(max_episode_steps)
-        self._elapsed_steps = 0
-
-    def reset(self, *, seed: Optional[int] = None, options: Optional[Dict] = None):
-        self._elapsed_steps = 0
-        return self.env.reset(seed=seed, options=options)
-
-    def step(self, action):
-        obs, reward, terminated, truncated, info = self.env.step(action)
-        self._elapsed_steps += 1
-        if (
-            not terminated
-            and not truncated
-            and self._elapsed_steps >= self._max_episode_steps
-        ):
-            truncated = True
-            info = dict(info)
-            info.setdefault("time_limit_reached", True)
-        return obs, reward, terminated, truncated, info
-
-
 @dataclass
 class UnitreeAssembleEnvConfig:
     simulation: bool = True
     action_dt: float = 0.02
-    use_safety: bool = False
+    use_safety: bool = True
     use_vision: bool = True
-    max_episode_steps: int = 1000
 
 
 def make_unitree_assemble_env(config: UnitreeAssembleEnvConfig) -> gym.Env:
@@ -68,7 +41,6 @@ def make_unitree_assemble_env(config: UnitreeAssembleEnvConfig) -> gym.Env:
     )
 
     env = UnitreeXRIntervention(env)
-    env = EpisodeLimitWrapper(env, max_episode_steps=config.max_episode_steps)
 
     env = UnitreeAssembleTaskWrapper(env)
     return env
