@@ -63,6 +63,12 @@ from serl_robot_infra.unitree_env import publish_xr_action
 publish_xr_action(joint_targets)  # numpy array shaped (28,)
 ```
 
-`UnitreeXRIntervention` reads the latest teleop action, replaces `env.step` input, and records it in `info["intervene_action"]` so data-collection scripts capture the real command.
+This helper matches the legacy SERL wrapper API. Typical deployments now drive the robot entirely from `xr_teleoperate` without using a Gym wrapper.
 
-(Ensure the teleop Python environment has `pip install -e serl_robot_infra`.)
+(Ensure the teleop Python environment has `pip install -e serl_robot_infra` if you reuse the bridge utilities.)
+
+## Data Logging
+
+Use `xr_teleoperate` to teleoperate the G1 and record demonstrations. The XR controller handles joint commands, camera capture, and success/failure labelling.
+
+After each session copy the saved files into the HIL-SERL workspace for offline processing or training. HIL-SERL keeps only offline utilities; recording now lives entirely in the XR teleoperate repository.
