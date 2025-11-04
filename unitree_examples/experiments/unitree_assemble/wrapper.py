@@ -39,7 +39,7 @@ class EpisodeLimitWrapper(gym.Wrapper):
 class UnitreeAssembleEnvConfig:
     simulation: bool = True
     action_dt: float = 0.02
-    use_safety: bool = True
+    use_safety: bool = False
     use_vision: bool = True
     max_episode_steps: int = 1000
 
