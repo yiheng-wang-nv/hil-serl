@@ -9,7 +9,7 @@ conda create -n hilserl python=3.10
 conda activate hilserl
 conda install -n hilserl -c conda-forge pinocchio=3.1.0 numpy=1.26.4
 
-pip install --upgrade "jax[cuda12_pip]==0.4.35" -i https://pypi.tuna.tsinghua.edu.cn/simple
+pip install --upgrade "jax[cuda12_pip]==0.4.35" jax jaxlib flax optax orbax-checkpoint -i https://pypi.tuna.tsinghua.edu.cn/simple
 
 cd serl_launcher && pip install -e . && pip install -r requirements.txt && cd ..
 
