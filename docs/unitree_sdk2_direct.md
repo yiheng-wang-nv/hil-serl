@@ -7,20 +7,19 @@ Instructions for running Unitree control inside the HIL-SERL environment.
 ```bash
 conda create -n hilserl python=3.10
 conda activate hilserl
-pip install --upgrade "jax[cuda12_pip]==0.4.35" -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
+pip install --no-cache-dir --upgrade "jax[cuda12_pip]==0.4.35" -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
 
 cd serl_launcher
-pip install -e .
-pip install -r requirements.txt
-
+pip install --no-cache-dir -e .
+pip install --no-cache-dir -r requirements.txt
+cd ..
+cd serl_robot_infra && pip install -e . && cd ..
 # install unitree sdk2 python
 cd ..
 git clone https://github.com/unitreerobotics/unitree_sdk2_python.git
 cd unitree_sdk2_python  && pip install -e .
 cd ..
 pip install flask
-cd hil-serl
-cd serl_robot_infra && pip install -e . && cd ..
 # install unitree_IL_lerobot
 cd ..
 git clone --recurse-submodules git@github.com:yiheng-wang-nv/unitree_IL_lerobot.git
@@ -29,16 +28,6 @@ git submodule update --init --recursive
 conda install pinocchio -c conda-forge
 cd unitree_lerobot/lerobot && pip install -e .
 cd ../../ && pip install -e .
-
-# install XR teleoperation in the same env
-cd ..
-git clone https://github.com/unitreerobotics/xr_teleoperate.git
-cd xr_teleoperate
-git submodule update --init --depth 1
-cd teleop/televuer && pip install -e . && openssl req -x509 -nodes -days 365 -newkey rsa:2048 -keyout key.pem -out cert.pem && cd ..
-cd robot_control/dex-retargeting && pip install -e . && cd ../../..
-pip install -r requirements.txt
-cd ../hil-serl/
 ```
 
 ## Quick Start Example
