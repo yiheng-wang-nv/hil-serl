@@ -46,7 +46,7 @@ class TrainConfig(DefaultTrainingConfig):
     }
 
     unitree_params: UnitreeRobotParams = UnitreeRobotParams()
-    vision_params: UnitreeVisionParams = dataclasses.field(default_factory=UnitreeVisionParams)
+    vision_params: UnitreeVisionParams = UnitreeVisionParams()
 
     def get_environment(self, fake_env=False, save_video=False, classifier=False):
         if fake_env:
