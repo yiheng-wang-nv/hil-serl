@@ -22,6 +22,6 @@
 # PY
 
 python examples/unitree_train_bc.py --exp_name unitree_install_trocar \
---dataset_dir /localhome/local-vennw/code/datasets/install_trocar_from_tray \
---bc_checkpoint_path /localhome/local-vennw/code/hil-serl/checkpoints/unitree_train_bc \
+--dataset_dir /home/nvidia/workspace/yiheng/xr_teleoperate/teleop/utils/data/install_trocar_from_tray/debug \
+--bc_checkpoint_path checkpoints/unitree_train_bc \
 --train_steps 20000 --save_video False --debug False

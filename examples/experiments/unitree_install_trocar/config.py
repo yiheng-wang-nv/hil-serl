@@ -2,7 +2,7 @@ import dataclasses
 from typing import Dict, Tuple
 from types import SimpleNamespace
 
-from examples.experiments.config import DefaultTrainingConfig
+from experiments.config import DefaultTrainingConfig
 
 
 @dataclasses.dataclass
