@@ -199,6 +199,59 @@ class XRTeleopDataset:
         }
         return out
 
+
+def _scan_episode_dirs(root: str) -> List[str]:
+    if os.path.isfile(os.path.join(root, "data.json")):
+        return [root]
+    subdirs = [
+        os.path.join(root, d)
+        for d in sorted(os.listdir(root))
+        if d.startswith("episode_") and os.path.isdir(os.path.join(root, d))
+    ]
+    if not subdirs:
+        raise ValueError(f"No episode_* directories or data.json found under {root}")
+    return subdirs
+
+
+def _load_initial_action_from_dataset(root: str, episode_index: int) -> np.ndarray:
+    episode_dirs = _scan_episode_dirs(root)
+    if episode_index < 0 or episode_index >= len(episode_dirs):
+        raise IndexError(f"Episode index {episode_index} out of range (total {len(episode_dirs)})")
+    episode_path = episode_dirs[episode_index]
+    data_path = os.path.join(episode_path, "data.json")
+    with open(data_path, "r") as f:
+        payload = json.load(f)
+    frames = payload.get("data", [])
+    if not frames:
+        raise ValueError(f"Episode {episode_path} has no frames.")
+
+    frame = frames[0]
+    actions = frame.get("actions", {})
+
+    def _get_qpos(tree: dict, key: str) -> np.ndarray:
+        return np.array(tree.get(key, {}).get("qpos", []), dtype=np.float32)
+
+    action_vec = np.concatenate(
+        [
+            _get_qpos(actions, "left_arm"),
+            _get_qpos(actions, "right_arm"),
+            _get_qpos(actions, "left_ee"),
+            _get_qpos(actions, "right_ee"),
+        ],
+        axis=0,
+    )
+    return action_vec.astype(np.float32)
+
+
+def _pad_action(action: np.ndarray, target_shape: Tuple[int, ...]) -> np.ndarray:
+    target_dim = target_shape[0]
+    if action.shape[0] == target_dim:
+        return action.astype(np.float32, copy=True)
+    padded = np.zeros(target_dim, dtype=np.float32)
+    L = min(target_dim, action.shape[0])
+    padded[:L] = action[:L]
+    return padded
+
 def _convert_image(image) -> np.ndarray:
     # Expect numpy HWC image; return (1, H, W, C) float32 in [0, 255]
     if image.ndim != 3 or image.shape[-1] not in (1, 3):
@@ -377,11 +430,15 @@ def print_yellow(x):
     return print("\033[93m {}\033[00m".format(x))
 
 
-def eval_policy(env, bc_agent: BCAgent, sampling_rng):
+def eval_policy(env, bc_agent: BCAgent, sampling_rng, init_action: np.ndarray | None = None):
     success_counter = 0
     time_list = []
     for episode in range(FLAGS.eval_n_trajs):
         obs, _ = env.reset()
+        if init_action is not None:
+            obs, _, done, _, _ = env.step(init_action)
+            if done:
+                obs, _ = env.reset()
         done = False
         start_time = time.time()
         while not done:
@@ -529,7 +586,18 @@ def main(_):
         )
         env = RecordEpisodeStatistics(env)
 
+        init_action = None
+        if FLAGS.eval_init_dataset:
+            init_action = _pad_action(
+                _load_initial_action_from_dataset(FLAGS.eval_init_dataset, FLAGS.eval_init_episode),
+                env.action_space.shape,
+            )
+
         sample_obs, _ = env.reset()
+        if init_action is not None:
+            sample_obs, _, done, _, _ = env.step(init_action)
+            if done:
+                sample_obs, _ = env.reset()
         sample_action = env.action_space.sample().astype(np.float32)
 
         bc_agent: BCAgent = make_bc_agent(
@@ -552,7 +620,7 @@ def main(_):
         print_green("Starting evaluation rollouts.")
         rng = jax.random.PRNGKey(FLAGS.seed)
         sampling_rng = jax.device_put(rng, PRIMARY_DEVICE)
-        eval_policy(env, bc_agent, sampling_rng)
+        eval_policy(env, bc_agent, sampling_rng, init_action=init_action)
 
 
 if __name__ == "__main__":
