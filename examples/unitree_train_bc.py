@@ -80,6 +80,11 @@ flags.DEFINE_integer(
     0,
     "Episode index used when --eval_init_dataset is provided.",
 )
+flags.DEFINE_float(
+    "action_noise_std",
+    0.0,
+    "Stddev of Gaussian noise added to actions when populating the BC replay buffer (set to 0 for no noise).",
+)
 
 DEVICES = jax.devices()
 PRIMARY_DEVICE = DEVICES[0]
@@ -413,6 +418,11 @@ def populate_replay_buffer_from_dataset(
             )
 
             action = np.asarray(current_frame[config.dataset_action_key], dtype=np.float32)
+            if FLAGS.action_noise_std > 0.0:
+                action = action + np.random.normal(0.0, FLAGS.action_noise_std, size=action.shape).astype(np.float32)
+                low = replay_buffer.action_space.low
+                high = replay_buffer.action_space.high
+                action = np.clip(action, low, high)
             done = idx + 1 == end - 1
 
             transition = dict(
