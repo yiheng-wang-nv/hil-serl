@@ -83,7 +83,10 @@ def main():
         print("Observation summary after reset:")
         describe(obs)
 
-        action = np.zeros(env.action_space.shape, dtype=np.float32)
+        action = np.array([-0.7229,  0.1968,  0.0150, -0.1876,  0.0862,  0.7841,  0.0161, -0.7657,
+        -0.0503, -0.1407, -0.2299,  0.0521,  1.0213, -0.0660, -0.0568,  0.0181,
+         0.0269, -1.0683, -0.7102, -1.0705, -0.7121, -0.0413, -0.0103, -0.0151,
+         1.0619,  0.7172,  1.0573,  0.7125]).astype(np.float32)
         for step in range(args.steps):
             obs, reward, terminated, truncated, info = env.step(action)
             print(f"\nStep {step + 1}: reward={reward}, terminated={terminated}, truncated={truncated}")
