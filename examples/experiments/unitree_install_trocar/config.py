@@ -1,7 +1,7 @@
 import dataclasses
 from typing import Dict
 
-from experiments.config import DefaultTrainingConfig
+from examples.experiments.config import DefaultTrainingConfig
 
 
 @dataclasses.dataclass
