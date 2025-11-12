@@ -379,9 +379,13 @@ def eval_policy(env, bc_agent: BCAgent, sampling_rng):
                 observations=jax.device_put(obs, PRIMARY_DEVICE),
                 seed=key,
             )
+            state_vec = obs.get("state")
+            if state_vec is not None:
+                print("STATE_DEBUG:", state_vec)
             actions = np.asarray(jax.device_get(actions))
             next_obs, reward, done, truncated, info = env.step(actions)
             obs = next_obs
+            time.sleep(1.0)
             if done:
                 if reward:
                     dt = time.time() - start_time
