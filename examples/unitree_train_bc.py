@@ -427,9 +427,9 @@ def train_bc_agent(
     ):
         batch = next(bc_replay_iterator)
         bc_agent, bc_update_info = bc_agent.update(batch)
-        if wandb_logger and step % log_period == 0:
-            wandb_logger.log({"bc": bc_update_info}, step=step)
-        elif step % log_period == 0:
+        if step % log_period == 0:
+            if wandb_logger:
+                wandb_logger.log({"bc": bc_update_info}, step=step)
             print(f"Step {step}: BC metrics {bc_update_info}")
         if checkpoint_path and step > train_steps - 100 and step % 10 == 0:
             checkpoints.save_checkpoint(
