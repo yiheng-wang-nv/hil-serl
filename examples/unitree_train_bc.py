@@ -40,6 +40,22 @@ flags.DEFINE_boolean(
     "debug", False, "Debug mode (disables wandb logging)."
 )
 
+flags.DEFINE_string(
+    "unitree_video_host",
+    "192.168.123.164",
+    "IP address of the Unitree image server (used for evaluation).",
+)
+flags.DEFINE_integer(
+    "unitree_video_port",
+    5555,
+    "ZeroMQ port of the Unitree image server (used for evaluation).",
+)
+flags.DEFINE_boolean(
+    "unitree_disable_wrist_video",
+    False,
+    "Disable wrist camera streams when wrapping the evaluation environment.",
+)
+
 DEVICES = jax.devices()
 PRIMARY_DEVICE = DEVICES[0]
 
@@ -414,6 +430,11 @@ def train_bc_agent(
 def main(_):
     assert FLAGS.exp_name in CONFIG_MAPPING, "Experiment folder not found."
     config = CONFIG_MAPPING[FLAGS.exp_name]()
+    if hasattr(config, "vision_params"):
+        config.vision_params.server_address = FLAGS.unitree_video_host
+        config.vision_params.port = FLAGS.unitree_video_port
+        if FLAGS.unitree_disable_wrist_video:
+            config.vision_params.enable_wrist = False
 
     eval_mode = FLAGS.eval_n_trajs > 0
 
@@ -512,4 +533,3 @@ def main(_):
 
 if __name__ == "__main__":
     app.run(main)
-

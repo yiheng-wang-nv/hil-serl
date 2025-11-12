@@ -43,9 +43,38 @@ def main():
         default=0.0,
         help="Optional delay (seconds) between steps to give image streams time to refresh.",
     )
+    parser.add_argument(
+        "--video_host",
+        type=str,
+        default=None,
+        help="Override Unitree image server host (defaults to config value).",
+    )
+    parser.add_argument(
+        "--video_port",
+        type=int,
+        default=None,
+        help="Override Unitree image server port (defaults to config value).",
+    )
+    parser.add_argument(
+        "--disable_wrist",
+        action="store_true",
+        help="Disable wrist camera streams when testing vision.",
+    )
+    parser.add_argument(
+        "--simulation",
+        action="store_true",
+        help="Connect to the simulator instead of the real robot.",
+    )
     args = parser.parse_args()
 
     config = TrainConfig()
+    if args.video_host:
+        config.vision_params.server_address = args.video_host
+    if args.video_port is not None:
+        config.vision_params.port = args.video_port
+    if args.disable_wrist:
+        config.vision_params.enable_wrist = False
+    config.unitree_params.simulation = args.simulation
     env = config.get_environment(fake_env=False, save_video=False, classifier=True)
 
     try:

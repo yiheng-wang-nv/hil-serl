@@ -11,6 +11,8 @@ from __future__ import annotations
 import contextlib
 from types import SimpleNamespace
 from typing import Any, Dict, Optional
+from multiprocessing import shared_memory
+import threading
 
 import gymnasium as gym
 from gymnasium import spaces
@@ -40,14 +42,12 @@ class UnitreeImageClient:
         simulation: bool,
         image_args: Optional[SimpleNamespace] = None,
     ) -> None:
-        from unitree_lerobot.eval_robot.make_robot import setup_image_client
-
         if image_args is None:
-            image_args = SimpleNamespace(sim=simulation)
-        elif not hasattr(image_args, "sim"):
+            image_args = SimpleNamespace()
+        if not hasattr(image_args, "sim"):
             setattr(image_args, "sim", simulation)
 
-        info = setup_image_client(image_args)
+        info = self._setup_image_client(image_args)
 
         self._tv_img_array = info.get("tv_img_array")
         self._wrist_img_array = info.get("wrist_img_array")
@@ -56,6 +56,8 @@ class UnitreeImageClient:
         self._is_binocular = bool(info.get("is_binocular", False))
         self._has_wrist_cam = bool(info.get("has_wrist_cam", False))
         self._shm_resources = list(info.get("shm_resources", []))
+        self._image_client = info.get("client")
+        self._image_thread = info.get("thread")
 
         if self._tv_img_array is None:
             raise RuntimeError("setup_image_client did not return a head camera array.")
@@ -90,12 +92,18 @@ class UnitreeImageClient:
 
     def close(self) -> None:
         """Release shared-memory resources."""
+        if getattr(self, "_image_client", None) is not None:
+            self._image_client.running = False
+        if getattr(self, "_image_thread", None) is not None:
+            self._image_thread.join(timeout=1.0)
         for shm in self._shm_resources:
             with contextlib.suppress(Exception):
                 shm.close()
             with contextlib.suppress(Exception):
                 shm.unlink()
         self._shm_resources.clear()
+        self._image_client = None
+        self._image_thread = None
 
     @property
     def tv_img_shape(self):
@@ -112,6 +120,109 @@ class UnitreeImageClient:
     @property
     def has_wrist_cam(self) -> bool:
         return self._has_wrist_cam
+
+    def _setup_image_client(self, args: SimpleNamespace) -> Dict[str, Any]:
+        from unitree_lerobot.eval_robot.image_server.image_client import ImageClient
+
+        simulation = bool(getattr(args, "sim", False))
+        default_sim_config = {
+            "fps": 30,
+            "head_camera_type": "opencv",
+            "head_camera_image_shape": [480, 640],
+            "head_camera_id_numbers": [0],
+            "wrist_camera_type": "opencv",
+            "wrist_camera_image_shape": [480, 640],
+            "wrist_camera_id_numbers": [2, 4],
+        }
+        default_real_config = {
+            "fps": 30,
+            "head_camera_type": "opencv",
+            "head_camera_image_shape": [480, 640],
+            "head_camera_id_numbers": [4],
+            "wrist_camera_type": "opencv",
+            "wrist_camera_image_shape": [480, 640],
+            "wrist_camera_id_numbers": [0, 2],
+        }
+        img_config = getattr(args, "image_config", None)
+        if img_config is None:
+            img_config = default_sim_config if simulation else default_real_config
+
+        ASPECT_RATIO_THRESHOLD = 2.0
+        head_ratio = img_config["head_camera_image_shape"][1] / img_config["head_camera_image_shape"][0]
+        binocular = len(img_config.get("head_camera_id_numbers", [])) > 1 or head_ratio > ASPECT_RATIO_THRESHOLD
+        has_wrist = "wrist_camera_type" in img_config and img_config.get("wrist_camera_type") is not None
+
+        if binocular and not head_ratio > ASPECT_RATIO_THRESHOLD:
+            tv_img_shape = (
+                img_config["head_camera_image_shape"][0],
+                img_config["head_camera_image_shape"][1] * 2,
+                3,
+            )
+        else:
+            tv_img_shape = (
+                img_config["head_camera_image_shape"][0],
+                img_config["head_camera_image_shape"][1],
+                3,
+            )
+
+        tv_img_shm = shared_memory.SharedMemory(
+            create=True, size=int(np.prod(tv_img_shape)) * np.uint8().itemsize
+        )
+        tv_img_array = np.ndarray(tv_img_shape, dtype=np.uint8, buffer=tv_img_shm.buf)
+
+        wrist_img_array = None
+        wrist_img_shape = None
+        wrist_img_shm = None
+        server_address = getattr(args, "server_address", "192.168.123.164")
+        port = getattr(args, "port", 5555)
+        image_show = getattr(args, "image_show", False)
+
+        if has_wrist:
+            wrist_img_shape = (
+                img_config["wrist_camera_image_shape"][0],
+                img_config["wrist_camera_image_shape"][1] * 2,
+                3,
+            )
+            wrist_img_shm = shared_memory.SharedMemory(
+                create=True, size=int(np.prod(wrist_img_shape)) * np.uint8().itemsize
+            )
+            wrist_img_array = np.ndarray(wrist_img_shape, dtype=np.uint8, buffer=wrist_img_shm.buf)
+            image_client = ImageClient(
+                tv_img_shape=tv_img_shape,
+                tv_img_shm_name=tv_img_shm.name,
+                wrist_img_shape=wrist_img_shape,
+                wrist_img_shm_name=wrist_img_shm.name,
+                server_address=server_address,
+                port=port,
+                image_show=image_show,
+            )
+        else:
+            image_client = ImageClient(
+                tv_img_shape=tv_img_shape,
+                tv_img_shm_name=tv_img_shm.name,
+                server_address=server_address,
+                port=port,
+                image_show=image_show,
+            )
+
+        thread = threading.Thread(target=image_client.receive_process, daemon=True)
+        thread.start()
+
+        shm_resources = [tv_img_shm]
+        if wrist_img_shm is not None:
+            shm_resources.append(wrist_img_shm)
+
+        return {
+            "tv_img_array": tv_img_array,
+            "wrist_img_array": wrist_img_array,
+            "tv_img_shape": tv_img_shape,
+            "wrist_img_shape": wrist_img_shape,
+            "is_binocular": binocular,
+            "has_wrist_cam": has_wrist,
+            "shm_resources": shm_resources,
+            "client": image_client,
+            "thread": thread,
+        }
 
 
 class UnitreeVisionWrapper(gym.Wrapper):
