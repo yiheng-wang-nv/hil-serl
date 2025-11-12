@@ -65,6 +65,11 @@ flags.DEFINE_boolean(
     True,
     "If False, skip all vision modalities during training/eval (state-only BC).",
 )
+flags.DEFINE_float(
+    "unitree_action_dt",
+    1.0 / 30.0,
+    "Control period (seconds) for Unitree environments (default matches 30 FPS).",
+)
 
 DEVICES = jax.devices()
 PRIMARY_DEVICE = DEVICES[0]
@@ -385,13 +390,9 @@ def eval_policy(env, bc_agent: BCAgent, sampling_rng):
                 observations=jax.device_put(obs, PRIMARY_DEVICE),
                 seed=key,
             )
-            state_vec = obs.get("state")
-            if state_vec is not None:
-                print("STATE_DEBUG:", state_vec)
             actions = np.asarray(jax.device_get(actions))
             next_obs, reward, done, truncated, info = env.step(actions)
             obs = next_obs
-            time.sleep(1.0)
             if done:
                 if reward:
                     dt = time.time() - start_time
@@ -457,6 +458,7 @@ def main(_):
             config.vision_params.enable_wrist = False
     if hasattr(config, "unitree_params"):
         config.unitree_params.simulation = FLAGS.unitree_simulation
+        config.unitree_params.action_dt = FLAGS.unitree_action_dt
 
     eval_mode = FLAGS.eval_n_trajs > 0
 

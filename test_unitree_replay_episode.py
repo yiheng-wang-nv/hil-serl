@@ -90,10 +90,9 @@ def main():
     parser.add_argument("--dataset_dir", required=True, help="Path containing episode_*/data.json")
     parser.add_argument("--episode", type=int, default=0, help="Episode index to replay.")
     parser.add_argument("--steps", type=int, default=-1, help="Max number of steps to replay (-1 = full episode).")
-    parser.add_argument("--sleep", type=float, default=0.02, help="Delay between steps (seconds).")
     parser.add_argument("--simulation", action="store_true", help="Use simulator DDS channel.")
     parser.add_argument("--motion_mode", action="store_true", help="Enable Unitree motion blending.")
-    parser.add_argument("--action_dt", type=float, default=0.02, help="Env control period.")
+    parser.add_argument("--action_dt", type=float, default=1.0 / 30.0, help="Env control period (default 30 FPS).")
     args = parser.parse_args()
 
     actions, states = load_episode_actions(args.dataset_dir, args.episode)
@@ -114,13 +113,10 @@ def main():
                 f"Step {idx + 1}/{max_steps}: reward={reward}, terminated={terminated}, "
                 f"truncated={truncated}, obs[:5]={np.asarray(obs)[:5]}"
             )
-            if args.sleep > 0:
-                time.sleep(args.sleep)
             if terminated or truncated:
                 print("Environment finished episode early; resetting...")
                 obs, info = env.reset()
     finally:
-        time.sleep(1.0)
         env.close()
 
 
