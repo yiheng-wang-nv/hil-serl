@@ -257,10 +257,18 @@ class UnitreeVisionWrapper(gym.Wrapper):
         if robot_state_space is None:
             robot_state_space = spaces.Box(-np.inf, np.inf, shape=raw_env.observation_space.shape, dtype=np.float32)
 
+        self._arm_dof = int(getattr(raw_env, "_arm_dof", 0))
+        ee_dof = int(getattr(raw_env, "_ee_dof", 0))
+        hand_pos_len = ee_dof * 2 if ee_dof > 0 else 0
+        self._state_dim = self._arm_dof + hand_pos_len
+        if self._state_dim <= 0:
+            self._state_dim = robot_state_space.shape[0] if hasattr(robot_state_space, "shape") else 0
+        state_shape = (self._state_dim,) if self._state_dim > 0 else robot_state_space.shape
+
         obs_spaces: Dict[str, spaces.Space] = {
             "robot_state": robot_state_space,
             # Alias required by learning code paths that expect a "state" key.
-            "state": robot_state_space,
+            "state": spaces.Box(-np.inf, np.inf, shape=state_shape, dtype=np.float32),
             "video.room_view": spaces.Box(
                 low=0,
                 high=255,
@@ -306,10 +314,11 @@ class UnitreeVisionWrapper(gym.Wrapper):
 
     # ------------------------------------------------------------------ helpers
     def _compose(self, robot_obs: Any) -> Dict[str, Any]:
-        obs: Dict[str, Any] = {
-            "robot_state": robot_obs,
-            # Keep a "state" view for consumers that expect proprioception under this key.
-            "state": robot_obs,
-        }
+        obs: Dict[str, Any] = {"robot_state": robot_obs}
+        state_vec = np.asarray(robot_obs)
+        if self._state_dim > 0 and state_vec.shape[0] >= self._state_dim:
+            obs["state"] = state_vec[: self._state_dim]
+        else:
+            obs["state"] = state_vec
         obs.update(self._image_client.get_latest_frames(copy=self._copy_images))
         return obs
