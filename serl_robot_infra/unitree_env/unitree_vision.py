@@ -148,6 +148,8 @@ class UnitreeVisionWrapper(gym.Wrapper):
 
         obs_spaces: Dict[str, spaces.Space] = {
             "robot_state": robot_state_space,
+            # Alias required by learning code paths that expect a "state" key.
+            "state": robot_state_space,
             "video.room_view": spaces.Box(
                 low=0,
                 high=255,
@@ -193,6 +195,10 @@ class UnitreeVisionWrapper(gym.Wrapper):
 
     # ------------------------------------------------------------------ helpers
     def _compose(self, robot_obs: Any) -> Dict[str, Any]:
-        obs: Dict[str, Any] = {"robot_state": robot_obs}
+        obs: Dict[str, Any] = {
+            "robot_state": robot_obs,
+            # Keep a "state" view for consumers that expect proprioception under this key.
+            "state": robot_obs,
+        }
         obs.update(self._image_client.get_latest_frames(copy=self._copy_images))
         return obs
