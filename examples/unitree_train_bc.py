@@ -420,9 +420,6 @@ def populate_replay_buffer_from_dataset(
             action = np.asarray(current_frame[config.dataset_action_key], dtype=np.float32)
             if FLAGS.action_noise_std > 0.0:
                 action = action + np.random.normal(0.0, FLAGS.action_noise_std, size=action.shape).astype(np.float32)
-                low = replay_buffer.action_space.low
-                high = replay_buffer.action_space.high
-                action = np.clip(action, low, high)
             done = idx + 1 == end - 1
 
             transition = dict(
