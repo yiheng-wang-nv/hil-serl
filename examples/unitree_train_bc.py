@@ -70,6 +70,16 @@ flags.DEFINE_float(
     1.0 / 30.0,
     "Control period (seconds) for Unitree environments (default matches 30 FPS).",
 )
+flags.DEFINE_string(
+    "eval_init_dataset",
+    None,
+    "Optional dataset directory to pull the first action from when initializing evaluation episodes.",
+)
+flags.DEFINE_integer(
+    "eval_init_episode",
+    0,
+    "Episode index used when --eval_init_dataset is provided.",
+)
 
 DEVICES = jax.devices()
 PRIMARY_DEVICE = DEVICES[0]
