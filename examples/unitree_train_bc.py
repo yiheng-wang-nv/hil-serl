@@ -39,6 +39,11 @@ flags.DEFINE_boolean("save_video", False, "Save video of the evaluation rollouts
 flags.DEFINE_boolean(
     "debug", False, "Debug mode (disables wandb logging)."
 )
+flags.DEFINE_boolean(
+    "unitree_simulation",
+    False,
+    "If True, connect to the Unitree simulator DDS instead of the real robot.",
+)
 
 flags.DEFINE_string(
     "unitree_video_host",
@@ -435,6 +440,8 @@ def main(_):
         config.vision_params.port = FLAGS.unitree_video_port
         if FLAGS.unitree_disable_wrist_video:
             config.vision_params.enable_wrist = False
+    if hasattr(config, "unitree_params"):
+        config.unitree_params.simulation = FLAGS.unitree_simulation
 
     eval_mode = FLAGS.eval_n_trajs > 0
 
