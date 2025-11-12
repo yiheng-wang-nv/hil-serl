@@ -7,10 +7,10 @@ Instructions for running Unitree control inside the HIL-SERL environment.
 ```bash
 conda create -n hilserl python=3.10
 conda activate hilserl
-pip install --no-cache-dir --upgrade "jax[cuda12_pip]==0.4.35" -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
-
+pip install --no-cache-dir -U "jax[cuda12]" orbax flax
 cd serl_launcher
 pip install --no-cache-dir -e .
+# need to specify jax version, otherwise, a separate jax jaxlib (cpu) will be installed
 pip install --no-cache-dir -r requirements.txt
 cd ..
 cd serl_robot_infra && pip install -e . && cd ..
@@ -28,6 +28,7 @@ git submodule update --init --recursive
 conda install pinocchio -c conda-forge
 cd unitree_lerobot/lerobot && pip install -e .
 cd ../../ && pip install -e .
+conda install "ffmpeg<8" -c conda-forge
 ```
 
 ## Quick Start Example

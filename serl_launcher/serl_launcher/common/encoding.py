@@ -56,12 +56,19 @@ class EncodingWrapper(nn.Module):
             # project state to embeddings as well
             state = observations["state"]
             if self.enable_stacking:
-                # Combine stacking and channels into a single dimension
-                if len(state.shape) == 2:
-                    state = rearrange(state, "T C -> (T C)")
-                    encoded = encoded.reshape(-1)
-                if len(state.shape) == 3:
+                if state.ndim == 3:
+                    # (Batch, Stack, C) -> (Batch, Stack*C)
                     state = rearrange(state, "B T C -> B (T C)")
+                elif state.ndim == 2:
+                    if encoded.ndim == 1:
+                        # Unbatched stacked sequence: (T, C)
+                        state = rearrange(state, "T C -> (T C)")
+                        encoded = encoded.reshape(-1)
+                    # else: already (Batch, C), leave as-is
+                elif state.ndim not in (1,):
+                    raise ValueError(
+                        f"Unsupported proprioception shape {state.shape} with stacking enabled."
+                    )
             state = nn.Dense(
                 self.proprio_latent_dim, kernel_init=nn.initializers.xavier_uniform()
             )(state)

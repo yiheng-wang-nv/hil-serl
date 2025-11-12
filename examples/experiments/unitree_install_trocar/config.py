@@ -43,7 +43,7 @@ class TrainConfig(DefaultTrainingConfig):
 
         from gymnasium.wrappers import RecordEpisodeStatistics
 
-        from serl_robot_infra.unitree_env import (
+        from unitree_env import (
             UnitreeG1DirectEnv,
             UnitreeSafetyWrapper,
             UnitreeVisionWrapper,

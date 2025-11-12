@@ -4,27 +4,23 @@ import os
 import time
 from typing import Dict, Iterable, Tuple, List
 
+import json
+import cv2
+TARGET_IMAGE_SIZE = (128, 128)
+
+
 import gymnasium as gym
 import jax
-import jax.numpy as jnp
 import numpy as np
-import torch
 import tqdm
 from absl import app, flags
 from flax.core import frozen_dict
 from flax.training import checkpoints
 from gymnasium.wrappers.record_episode_statistics import RecordEpisodeStatistics
 
-from lerobot.datasets.lerobot_dataset import LeRobotDataset
-
 from serl_launcher.agents.continuous.bc import BCAgent
 from serl_launcher.data.data_store import MemoryEfficientReplayBufferDataStore
 from serl_launcher.utils.launcher import make_bc_agent, make_wandb_logger
-
-from serl_robot_infra.unitree_env.joint_limits import (
-    JOINT_LOWER_BOUNDS,
-    JOINT_UPPER_BOUNDS,
-)
 
 from experiments.mappings import CONFIG_MAPPING
 
@@ -33,27 +29,7 @@ FLAGS = flags.FLAGS
 flags.DEFINE_string("exp_name", None, "Name of experiment corresponding to folder.")
 flags.DEFINE_integer("seed", 42, "Random seed.")
 
-flags.DEFINE_string("lerobot_repo_id", None, "Hugging Face repo id for the dataset.")
-flags.DEFINE_string(
-    "lerobot_root",
-    None,
-    "Optional local directory for caching LeRobot datasets.",
-)
-flags.DEFINE_boolean(
-    "lerobot_download_videos",
-    True,
-    "Download videos when loading the dataset (required for image observations).",
-)
-flags.DEFINE_boolean(
-    "lerobot_force_sync",
-    False,
-    "Force syncing dataset metadata/files from the Hugging Face Hub.",
-)
-flags.DEFINE_boolean(
-    "include_vision",
-    True,
-    "Whether to include camera observations from the dataset.",
-)
+flags.DEFINE_string("dataset_dir", None, "Path to XR teleoperation dataset (directory with episode_* or data.json).")
 
 flags.DEFINE_string("bc_checkpoint_path", None, "Path to save checkpoints.")
 flags.DEFINE_integer("eval_n_trajs", 0, "Number of trajectories to evaluate.")
@@ -64,9 +40,8 @@ flags.DEFINE_boolean(
     "debug", False, "Debug mode (disables wandb logging)."
 )
 
-devices = jax.local_devices()
-num_devices = len(devices)
-sharding = jax.sharding.PositionalSharding(devices)
+DEVICES = jax.devices()
+PRIMARY_DEVICE = DEVICES[0]
 
 
 class OfflineUnitreeEnv(gym.Env):
@@ -84,28 +59,122 @@ class OfflineUnitreeEnv(gym.Env):
     def step(self, action: np.ndarray):
         raise RuntimeError("OfflineUnitreeEnv does not implement step(); it is a placeholder for dataset training.")
 
+#
+# XR teleoperation raw dataset loader (no torch, no HuggingFace dependency)
+#
+class XRTeleopDataset:
+    def __init__(self, root: str):
+        self.root = os.path.abspath(root)
+        # Determine episodes
+        if os.path.isfile(os.path.join(self.root, "data.json")):
+            self.episode_dirs = [self.root]
+        else:
+            # Look for episode_* subdirs
+            subdirs = [
+                os.path.join(self.root, d)
+                for d in sorted(os.listdir(self.root))
+                if d.startswith("episode_") and os.path.isdir(os.path.join(self.root, d))
+            ]
+            if not subdirs:
+                raise ValueError(f"No episode_* directories or data.json found under {self.root}")
+            self.episode_dirs = subdirs
 
-def _tensor_to_numpy(value, dtype=None):
-    if isinstance(value, torch.Tensor):
-        array = value.detach().cpu().numpy()
-    else:
-        array = np.asarray(value)
-    if dtype is not None:
-        array = array.astype(dtype)
-    return array
+        # Build flat frames index and episode boundaries
+        self._frames = []  # each entry: dict with keys we need
+        self._from = []
+        self._to = []
+        cursor = 0
+        for ep_dir in self.episode_dirs:
+            data_path = os.path.join(ep_dir, "data.json")
+            with open(data_path, "r") as f:
+                data_json = json.load(f)
+            frames = data_json.get("data", [])
+            for fr in frames:
+                # Compose state/action (28-dim): [left_arm(7), right_arm(7), left_ee(7), right_ee(7)]
+                def _get_qpos(tree: dict, key: str) -> np.ndarray:
+                    arr = np.array(tree.get(key, {}).get("qpos", []), dtype=np.float32)
+                    return arr
+                states = fr.get("states", {})
+                actions = fr.get("actions", {})
+                state = np.concatenate(
+                    [
+                        _get_qpos(states, "left_arm"),
+                        _get_qpos(states, "right_arm"),
+                        _get_qpos(states, "left_ee"),
+                        _get_qpos(states, "right_ee"),
+                    ],
+                    axis=0,
+                ).astype(np.float32)
+                action = np.concatenate(
+                    [
+                        _get_qpos(actions, "left_arm"),
+                        _get_qpos(actions, "right_arm"),
+                        _get_qpos(actions, "left_ee"),
+                        _get_qpos(actions, "right_ee"),
+                    ],
+                    axis=0,
+                ).astype(np.float32)
+                # Image paths
+                colors = fr.get("colors", {})
+                cam_room = os.path.join(ep_dir, colors.get("color_0", ""))
+                cam_left = os.path.join(ep_dir, colors.get("color_1", ""))
+                cam_right = os.path.join(ep_dir, colors.get("color_2", ""))
+                self._frames.append(
+                    {
+                        # Match the keys expected downstream by config.dataset_* mapping
+                        "observation.state": state,
+                        "action": action,
+                        "observation.images.cam_room": cam_room,
+                        "observation.images.cam_left_wrist": cam_left,
+                        "observation.images.cam_right_wrist": cam_right,
+                    }
+                )
+            self._from.append(cursor)
+            cursor += len(frames)
+            self._to.append(cursor)
 
+        self._from = np.array(self._from, dtype=np.int64)
+        self._to = np.array(self._to, dtype=np.int64)
 
-def _convert_image(tensor) -> np.ndarray:
-    image = _tensor_to_numpy(tensor)
-    if image.ndim == 3 and image.shape[0] in (1, 3):
-        image = np.transpose(image, (1, 2, 0))
-    image = np.clip(image, 0, 255).astype(np.uint8)
-    return image
+    def __len__(self) -> int:
+        return len(self._frames)
 
+    @property
+    def num_episodes(self) -> int:
+        return len(self._from)
 
-def _convert_state(tensor) -> np.ndarray:
-    return _tensor_to_numpy(tensor, dtype=np.float32)
+    @property
+    def episode_data_index(self) -> Dict[str, np.ndarray]:
+        return {"from": self._from, "to": self._to}
 
+    def _load_image(self, path: str) -> np.ndarray:
+        if not path or not os.path.isfile(path):
+            raise FileNotFoundError(f"Image path not found: {path}")
+        img_bgr = cv2.imread(path, cv2.IMREAD_COLOR)
+        if img_bgr is None:
+            raise OSError(f"Failed to read image: {path}")
+        img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
+        return img_rgb  # (H, W, 3) uint8
+
+    def __getitem__(self, idx: int) -> Dict:
+        rec = self._frames[idx]
+        # Load images on demand
+        out = {
+            "observation.state": rec["observation.state"],
+            "action": rec["action"],
+            "observation.images.cam_room": self._load_image(rec["observation.images.cam_room"]),
+            "observation.images.cam_left_wrist": self._load_image(rec["observation.images.cam_left_wrist"]),
+            "observation.images.cam_right_wrist": self._load_image(rec["observation.images.cam_right_wrist"]),
+        }
+        return out
+
+def _convert_image(image) -> np.ndarray:
+    # Expect numpy HWC image; return (1, H, W, C) float32 in [0, 255]
+    if image.ndim != 3 or image.shape[-1] not in (1, 3):
+        raise ValueError(f"Expected HWC image with 1 or 3 channels; got {image.shape}.")
+    if image.dtype != np.float32:
+        image = image.astype(np.float32)
+    return np.expand_dims(image, axis=0)
 
 def _build_observation_dict(
     frame: Dict,
@@ -113,14 +182,20 @@ def _build_observation_dict(
     camera_map: Dict[str, str],
     enabled_cameras: Iterable[str],
 ) -> Dict[str, np.ndarray]:
-    observation = {"state": _convert_state(frame[config.dataset_state_key])}
+    observation = {"state": np.asarray(frame[config.dataset_state_key], dtype=np.float32)}
 
     for dataset_key, obs_key in camera_map.items():
         if obs_key not in enabled_cameras:
             continue
         if dataset_key not in frame:
             continue
-        observation[obs_key] = _convert_image(frame[dataset_key])
+        image = _convert_image(frame[dataset_key])
+        resized_frames = []
+        for i in range(image.shape[0]):
+            frame_i = image[i]
+            frame_i = cv2.resize(frame_i.astype(np.float32), TARGET_IMAGE_SIZE[::-1], interpolation=cv2.INTER_LINEAR)
+            resized_frames.append(frame_i.astype(np.float32))
+        observation[obs_key] = np.stack(resized_frames, axis=0)
 
     return observation
 
@@ -128,11 +203,7 @@ def _build_observation_dict(
 def _detect_available_cameras(
     sample_frame: Dict,
     config,
-    include_vision: bool,
 ) -> List[str]:
-    if not include_vision:
-        return []
-
     enabled = []
     for dataset_key, obs_key in config.dataset_camera_map.items():
         if dataset_key in sample_frame:
@@ -157,26 +228,26 @@ def _build_observation_space(sample_observation: Dict[str, np.ndarray]) -> gym.S
             low=0,
             high=255,
             shape=value.shape,
-            dtype=np.uint8,
+            dtype=np.float32,
         )
 
     return gym.spaces.Dict(spaces_dict)
 
 
-def _build_action_space() -> gym.Space:
-    return gym.spaces.Box(
-        low=JOINT_LOWER_BOUNDS.astype(np.float32),
-        high=JOINT_UPPER_BOUNDS.astype(np.float32),
-        dtype=np.float32,
-    )
+def _build_action_space(sample_action: np.ndarray) -> gym.Space:
+    # Use dataset-derived action dimension; keep bounds broad
+    shape = sample_action.shape
+    low = -np.inf * np.ones(shape, dtype=np.float32)
+    high = np.inf * np.ones(shape, dtype=np.float32)
+    return gym.spaces.Box(low=low, high=high, dtype=np.float32)
 
 
-def _prepare_offline_env(dataset: LeRobotDataset, config) -> Tuple[OfflineUnitreeEnv, Dict[str, np.ndarray], np.ndarray, List[str]]:
+def _prepare_offline_env(dataset, config) -> Tuple[OfflineUnitreeEnv, Dict[str, np.ndarray], np.ndarray, List[str]]:
     if len(dataset) == 0:
-        raise ValueError("Dataset is empty. Ensure the repo_id points to a valid dataset with at least one frame.")
+        raise ValueError("Dataset is empty. Ensure the dataset_dir points to a valid dataset with at least one frame.")
 
     sample_frame = dataset[0]
-    available_cameras = _detect_available_cameras(sample_frame, config, FLAGS.include_vision)
+    available_cameras = _detect_available_cameras(sample_frame, config)
 
     if not available_cameras:
         raise ValueError(
@@ -190,24 +261,24 @@ def _prepare_offline_env(dataset: LeRobotDataset, config) -> Tuple[OfflineUnitre
         available_cameras,
     )
 
-    sample_action = _tensor_to_numpy(sample_frame[config.dataset_action_key], dtype=np.float32)
+    sample_action = np.asarray(sample_frame[config.dataset_action_key], dtype=np.float32)
 
     observation_space = _build_observation_space(sample_observation)
-    action_space = _build_action_space()
+    action_space = _build_action_space(sample_action)
 
     offline_env = OfflineUnitreeEnv(observation_space, action_space, sample_observation)
     return offline_env, sample_observation, sample_action, available_cameras
 
 
-def _estimate_num_transitions(dataset: LeRobotDataset) -> int:
-    from_indices = dataset.episode_data_index["from"].cpu().numpy()
-    to_indices = dataset.episode_data_index["to"].cpu().numpy()
+def _estimate_num_transitions(dataset) -> int:
+    from_indices = dataset.episode_data_index["from"]
+    to_indices = dataset.episode_data_index["to"]
     lengths = to_indices - from_indices
     return int(np.sum(np.maximum(lengths - 1, 0)))
 
 
 def populate_replay_buffer_from_dataset(
-    dataset: LeRobotDataset,
+    dataset,
     config,
     replay_buffer: MemoryEfficientReplayBufferDataStore,
     enabled_cameras: Iterable[str],
@@ -246,7 +317,7 @@ def populate_replay_buffer_from_dataset(
                 enabled_cameras,
             )
 
-            action = _tensor_to_numpy(current_frame[config.dataset_action_key], dtype=np.float32)
+            action = np.asarray(current_frame[config.dataset_action_key], dtype=np.float32)
             done = idx + 1 == end - 1
 
             transition = dict(
@@ -284,7 +355,7 @@ def eval_policy(env, bc_agent: BCAgent, sampling_rng):
         while not done:
             sampling_rng, key = jax.random.split(sampling_rng)
             actions = bc_agent.sample_actions(
-                observations=jax.device_put(obs),
+                observations=jax.device_put(obs, PRIMARY_DEVICE),
                 seed=key,
             )
             actions = np.asarray(jax.device_get(actions))
@@ -316,9 +387,8 @@ def train_bc_agent(
             "batch_size": batch_size,
             "pack_obs_and_next_obs": False,
         },
-        device=sharding.replicate(),
+        device=PRIMARY_DEVICE,
     )
-
     for step in tqdm.tqdm(
         range(train_steps),
         dynamic_ncols=True,
@@ -348,8 +418,8 @@ def main(_):
     eval_mode = FLAGS.eval_n_trajs > 0
 
     if not eval_mode:
-        if FLAGS.lerobot_repo_id is None:
-            raise ValueError("--lerobot_repo_id must be provided for training.")
+        if FLAGS.dataset_dir is None:
+            raise ValueError("--dataset_dir must be provided for training.")
         if FLAGS.bc_checkpoint_path is None:
             raise ValueError("--bc_checkpoint_path must be specified to store checkpoints.")
         if os.path.isdir(os.path.join(FLAGS.bc_checkpoint_path, f"checkpoint_{FLAGS.train_steps}")):
@@ -358,12 +428,7 @@ def main(_):
                 "Please choose a new path or remove the existing checkpoint."
             )
 
-        dataset = LeRobotDataset(
-            repo_id=FLAGS.lerobot_repo_id,
-            root=FLAGS.lerobot_root,
-            download_videos=FLAGS.lerobot_download_videos,
-            force_cache_sync=FLAGS.lerobot_force_sync,
-        )
+        dataset = XRTeleopDataset(FLAGS.dataset_dir)
 
         offline_env, sample_observation, sample_action, enabled_cameras = _prepare_offline_env(dataset, config)
 
@@ -378,7 +443,6 @@ def main(_):
             image_keys=config.image_keys,
             encoder_type=config.encoder_type,
         )
-        bc_agent = jax.device_put(jax.tree_map(jnp.array, bc_agent), sharding.replicate())
 
         replay_buffer = MemoryEfficientReplayBufferDataStore(
             offline_env.observation_space,
@@ -430,7 +494,6 @@ def main(_):
             image_keys=tuple(config.image_keys),
             encoder_type=config.encoder_type,
         )
-        bc_agent = jax.device_put(jax.tree_map(jnp.array, bc_agent), sharding.replicate())
 
         if FLAGS.bc_checkpoint_path is None:
             raise ValueError("--bc_checkpoint_path must point to a trained checkpoint when running evaluation.")
@@ -443,7 +506,7 @@ def main(_):
 
         print_green("Starting evaluation rollouts.")
         rng = jax.random.PRNGKey(FLAGS.seed)
-        sampling_rng = jax.device_put(rng, sharding.replicate())
+        sampling_rng = jax.device_put(rng, PRIMARY_DEVICE)
         eval_policy(env, bc_agent, sampling_rng)
 
 

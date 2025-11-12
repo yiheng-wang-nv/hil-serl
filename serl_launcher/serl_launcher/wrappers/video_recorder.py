@@ -1,9 +1,10 @@
-from pathlib import Path
-from typing import List
+import os
+from typing import List, Optional
 
 import gymnasium as gym
 import imageio
 import numpy as np
+import tensorflow as tf
 
 # Take from
 # https://github.com/denisyarats/pytorch_sac/
@@ -73,7 +74,7 @@ class VideoRecorder(gym.Wrapper):
     ):
         super().__init__(env)
 
-        self.save_folder = Path(save_folder or ".")
+        self.save_folder = save_folder
         self.save_prefix = save_prefix
         self.height = height
         self.width = width
@@ -82,7 +83,8 @@ class VideoRecorder(gym.Wrapper):
         self.frames = []
         self.goal_conditioned = goal_conditioned
 
-        self.save_folder.mkdir(parents=True, exist_ok=True)
+        if not tf.io.gfile.exists(save_folder):
+            tf.io.gfile.makedirs(save_folder)
 
         self.num_record_episodes = -1
 
@@ -158,9 +160,11 @@ class VideoRecorder(gym.Wrapper):
                     filename = "%08d.mp4" % (self.num_videos)
                     if self.save_prefix is not None and self.save_prefix != "":
                         filename = f"{self.save_prefix}_{filename}"
-                    self.current_save_path = self.save_folder / filename
+                    self.current_save_path = tf.io.gfile.join(
+                        self.save_folder, filename
+                    )
 
-                    with self.current_save_path.open("wb") as f:
+                    with tf.io.gfile.GFile(self.current_save_path, "wb") as f:
                         imageio.mimsave(f, frames_to_save, "MP4", fps=self.fps)
 
                     self.num_videos += 1
