@@ -71,29 +71,30 @@ class TrainConfig(DefaultTrainingConfig):
             action_dt=self.unitree_params.action_dt,
         )
         env = UnitreeSafetyWrapper(env)
-        image_config = {
-            "fps": self.vision_params.fps,
-            "head_camera_type": "opencv",
-            "head_camera_image_shape": list(self.vision_params.head_camera_shape),
-            "head_camera_id_numbers": list(self.vision_params.head_camera_id_numbers),
-        }
-        if self.vision_params.enable_wrist:
-            image_config.update(
-                {
-                    "wrist_camera_type": "opencv",
-                    "wrist_camera_image_shape": list(self.vision_params.wrist_camera_shape),
-                    "wrist_camera_id_numbers": list(self.vision_params.wrist_camera_id_numbers),
-                }
+        if self.image_keys:
+            image_config = {
+                "fps": self.vision_params.fps,
+                "head_camera_type": "opencv",
+                "head_camera_image_shape": list(self.vision_params.head_camera_shape),
+                "head_camera_id_numbers": list(self.vision_params.head_camera_id_numbers),
+            }
+            if self.vision_params.enable_wrist:
+                image_config.update(
+                    {
+                        "wrist_camera_type": "opencv",
+                        "wrist_camera_image_shape": list(self.vision_params.wrist_camera_shape),
+                        "wrist_camera_id_numbers": list(self.vision_params.wrist_camera_id_numbers),
+                    }
+                )
+
+            image_args = SimpleNamespace(
+                sim=self.unitree_params.simulation,
+                image_config=image_config,
+                server_address=self.vision_params.server_address,
+                port=self.vision_params.port,
             )
 
-        image_args = SimpleNamespace(
-            sim=self.unitree_params.simulation,
-            image_config=image_config,
-            server_address=self.vision_params.server_address,
-            port=self.vision_params.port,
-        )
-
-        env = UnitreeVisionWrapper(env, enable_safety=False, image_args=image_args)
+            env = UnitreeVisionWrapper(env, enable_safety=False, image_args=image_args)
 
         if save_video:
             # UnitreeVisionWrapper already exposes images; logging handled elsewhere.

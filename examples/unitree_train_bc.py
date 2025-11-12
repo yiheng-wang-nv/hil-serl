@@ -60,6 +60,11 @@ flags.DEFINE_boolean(
     False,
     "Disable wrist camera streams when wrapping the evaluation environment.",
 )
+flags.DEFINE_boolean(
+    "use_vision",
+    True,
+    "If False, skip all vision modalities during training/eval (state-only BC).",
+)
 
 DEVICES = jax.devices()
 PRIMARY_DEVICE = DEVICES[0]
@@ -226,9 +231,10 @@ def _detect_available_cameras(
     config,
 ) -> List[str]:
     enabled = []
-    for dataset_key, obs_key in config.dataset_camera_map.items():
-        if dataset_key in sample_frame:
-            enabled.append(obs_key)
+    if FLAGS.use_vision:
+        for dataset_key, obs_key in config.dataset_camera_map.items():
+            if dataset_key in sample_frame:
+                enabled.append(obs_key)
     return enabled
 
 
@@ -423,6 +429,8 @@ def train_bc_agent(
         bc_agent, bc_update_info = bc_agent.update(batch)
         if wandb_logger and step % log_period == 0:
             wandb_logger.log({"bc": bc_update_info}, step=step)
+        elif step % log_period == 0:
+            print(f"Step {step}: BC metrics {bc_update_info}")
         if checkpoint_path and step > train_steps - 100 and step % 10 == 0:
             checkpoints.save_checkpoint(
                 os.path.abspath(checkpoint_path),
@@ -439,6 +447,9 @@ def train_bc_agent(
 def main(_):
     assert FLAGS.exp_name in CONFIG_MAPPING, "Experiment folder not found."
     config = CONFIG_MAPPING[FLAGS.exp_name]()
+    if not FLAGS.use_vision:
+        config.image_keys = []
+        config.dataset_camera_map = {}
     if hasattr(config, "vision_params"):
         config.vision_params.server_address = FLAGS.unitree_video_host
         config.vision_params.port = FLAGS.unitree_video_port

@@ -15,6 +15,6 @@ python test_unitree_replay_episode.py \
 python examples/unitree_train_bc.py \
 --exp_name unitree_install_trocar \
 --bc_checkpoint_path /home/nvidia/workspace/yiheng/hil-serl/checkpoints/unitree_train_bc \
---eval_n_trajs 5 \
+--eval_n_trajs 1 \
 --unitree_video_host 192.168.123.164 \
 --unitree_video_port 5555
