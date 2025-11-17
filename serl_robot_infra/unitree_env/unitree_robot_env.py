@@ -1,0 +1,312 @@
+"""
+Direct Unitree G1 + Dex3 environment that reuses the official control stack.
+
+This environment wraps ``unitree_lerobot.eval_robot.make_robot.setup_robot_interface``
+so that actions and observations follow the same structure used during model
+deployment:
+
+    action = [14 joint targets for the arms,
+              7 joint targets for the left Dex3 hand,
+              7 joint targets for the right Dex3 hand]
+
+Actions are interpreted as target joint positions. The arm targets are converted
+to torques via the Unitree IK solver (solve_tau) before being sent to the SDK2
+controller, while Dex3 joint targets are written to the shared memory that is
+consumed by ``Dex3_1_Controller``.
+
+Observations concatenate the current arm joint positions and velocities with the
+Dex3 joint positions (Dex3 velocities are not provided by the shared memory and
+are therefore reported as zeros).
+
+Prerequisites:
+    - ``unitree_sdk2_python`` installed in the active environment.
+    - ``unitree_lerobot`` (already installed in the Python environment).
+"""
+from __future__ import annotations
+
+import os
+import sys
+import time
+from dataclasses import dataclass
+from types import SimpleNamespace
+from typing import Dict, Optional
+
+import gymnasium as gym
+import numpy as np
+
+from .joint_limits import (
+    JOINT_NAMES,
+    JOINT_LOWER_BOUNDS,
+    JOINT_UPPER_BOUNDS,
+)
+
+
+@dataclass
+class UnitreeRobotState:
+    arm_position: np.ndarray
+    arm_velocity: np.ndarray
+    hand_position: np.ndarray
+
+
+class UnitreeG1DirectEnv(gym.Env):
+    metadata = {"render_modes": []}
+
+    def __init__(
+        self,
+        *,
+        arm: str = "G1_29",
+        ee: str = "dex3",
+        motion_mode: bool = False,
+        simulation: bool = False,
+        action_dt: float = 0.02,
+    ):
+        """
+        Args:
+            arm: Key into Unitree's `ARM_CONFIG` table. Defaults to the 29-DoF dual-arm model.
+            ee: End-effector entry from Unitree's `EE_CONFIG`. `"dex3"` enables the Dex3 hand pair.
+            motion_mode: Mirrors the `--motion` flag in Unitree scripts; set `True` to enable motion
+                blending as in the official evaluation utilities.
+            simulation: When `True`, connects to the simulator DDS channel (`ChannelFactoryInitialize(1)`).
+                Matches the `--sim` CLI flag used in Unitree examples.
+            action_dt: Control period in seconds. `0.02` (50 Hz) matches
+                `unitree_sdk2_python/examples/low_level/lowlevel_control.py` and the IsaacLab controller.
+        """
+        super().__init__()
+
+        # Expect unitree_lerobot to be importable; rely on environment setup.
+        from unitree_lerobot.eval_robot.make_robot import setup_robot_interface
+
+        args = SimpleNamespace(arm=arm, ee=ee, motion=motion_mode, sim=simulation)
+        robot_if = setup_robot_interface(args)
+
+        self._arm_ctrl = robot_if["arm_ctrl"]
+        self._arm_ik = robot_if["arm_ik"]
+        self._ee_shared_mem = robot_if.get("ee_shared_mem")
+        self._arm_dof: int = int(robot_if["arm_dof"])
+        self._ee_dof: int = int(robot_if.get("ee_dof", 0))
+        self._has_dex3: bool = self._ee_dof > 0 and self._ee_shared_mem is not None
+
+        self._simulation_mode = bool(simulation)
+        self._action_dt = float(action_dt)
+
+        # Per-joint bounds are loaded from `joint_limits.py`, which mirrors the URDF limits in
+        # `unitree_lerobot/eval_robot/assets/g1/g1_body29_hand14.urdf`. Update that file if Unitree
+        # ships a new model.
+        self.joint_names = list(JOINT_NAMES)
+        self._lower_bounds = JOINT_LOWER_BOUNDS.astype(np.float32)
+        self._upper_bounds = JOINT_UPPER_BOUNDS.astype(np.float32)
+        self.action_space = gym.spaces.Box(self._lower_bounds, self._upper_bounds, dtype=np.float32)
+
+        obs_dim = len(self.joint_names)
+        self.observation_space = gym.spaces.Box(
+            -np.inf, np.inf, shape=(obs_dim * 2,), dtype=np.float32
+        )
+
+        self._initial_state = self._read_robot_state(wait_for_hand=True)
+        initial_hand = self._initial_state.hand_position
+        if initial_hand.size == 0 and self._has_dex3:
+            initial_hand = np.zeros(self._ee_dof * 2, dtype=np.float32)
+        initial_action = np.concatenate(
+            [self._initial_state.arm_position, initial_hand]
+        ).astype(np.float32, copy=True)
+        if initial_action.shape[0] != self.action_space.shape[0]:
+            pad = np.zeros(self.action_space.shape[0], dtype=np.float32)
+            pad[: initial_action.shape[0]] = initial_action
+            initial_action = pad
+        self._initial_action = initial_action
+        self._last_action = self._initial_action.copy()
+
+        self._home_action = np.zeros(self.action_space.shape[0], dtype=np.float32)
+
+    # ------------------------------------------------------------------ helpers
+    def _read_robot_state(self, wait_for_hand: bool = False) -> UnitreeRobotState:
+        try:
+            arm_pos = np.asarray(self._arm_ctrl.get_current_dual_arm_q(), dtype=np.float32)
+        except AttributeError:
+            arm_pos = self._last_action[: self._arm_dof]
+        try:
+            arm_vel = np.asarray(self._arm_ctrl.get_current_dual_arm_dq(), dtype=np.float32)
+        except AttributeError:
+            arm_vel = np.zeros_like(arm_pos)
+
+        if self._has_dex3:
+            start = time.time()
+            hand_pos = np.zeros(self._ee_dof * 2, dtype=np.float32)
+            while True:
+                with self._ee_shared_mem["lock"]:
+                    shared = np.array(self._ee_shared_mem["state"][:], dtype=np.float32)
+                if shared.size >= self._ee_dof * 2 and (not wait_for_hand or np.any(shared)):
+                    hand_pos = shared[: self._ee_dof * 2]
+                    break
+                if not wait_for_hand or (time.time() - start) > 5.0:
+                    break
+                time.sleep(0.01)
+        else:
+            hand_pos = np.zeros(0, dtype=np.float32)
+
+        return UnitreeRobotState(arm_position=arm_pos, arm_velocity=arm_vel, hand_position=hand_pos)
+
+    def _apply_action(self, action: np.ndarray):
+        action = np.asarray(action, dtype=np.float32)
+        action = np.clip(action, self.action_space.low, self.action_space.high)
+        if action.shape[0] != self.action_space.shape[0]:
+            raise ValueError(f"Expected action shape {(self.action_space.shape[0],)}, got {action.shape}.")
+
+        arm_target = action[: self._arm_dof]
+        buffer = getattr(self._arm_ctrl, "lowstate_buffer", None)
+        lowstate_available = buffer is not None and buffer.GetData() is not None
+        if lowstate_available and hasattr(self._arm_ctrl, "clip_arm_q_target"):
+            velocity_limit = getattr(self._arm_ctrl, "arm_velocity_limit", None)
+            try:
+                # fall back to default limit if accessor not available
+                limit = float(velocity_limit) if velocity_limit is not None else None
+            except (TypeError, ValueError):
+                limit = None
+            try:
+                arm_target = self._arm_ctrl.clip_arm_q_target(
+                    arm_target,
+                    limit if limit is not None else 20.0,
+                )
+            except TypeError:
+                # older SDK signature without velocity argument
+                arm_target = self._arm_ctrl.clip_arm_q_target(arm_target)
+        tau = self._arm_ik.solve_tau(arm_target)
+        self._arm_ctrl.ctrl_dual_arm(arm_target, tau)
+
+        if self._has_dex3:
+            left = action[self._arm_dof : self._arm_dof + self._ee_dof]
+            right = action[self._arm_dof + self._ee_dof : self._arm_dof + 2 * self._ee_dof]
+            with self._ee_shared_mem["lock"]:
+                self._ee_shared_mem["left"][:] = left
+                self._ee_shared_mem["right"][:] = right
+                if "action" in self._ee_shared_mem:
+                    self._ee_shared_mem["action"][: self._ee_dof] = left
+                    self._ee_shared_mem["action"][self._ee_dof : 2 * self._ee_dof] = right
+        self._last_action = action
+
+    def _compose_observation(self, state: UnitreeRobotState) -> np.ndarray:
+        hand_velocity = (
+            np.zeros_like(state.hand_position) if state.hand_position.size else np.zeros(0, dtype=np.float32)
+        )
+        obs = np.concatenate([state.arm_position, state.hand_position, state.arm_velocity, hand_velocity])
+        return obs.astype(np.float32)
+
+    def observe(self) -> np.ndarray:
+        """Return the latest robot observation without sending a new action."""
+        state = self._read_robot_state()
+        return self._compose_observation(state)
+
+    def go_home(self, steps: int = 200) -> np.ndarray:
+        """Command the robot to the zero joint configuration (arm + hand).
+
+        Args:
+            steps: Number of control iterations to run while holding the home pose.
+                Defaults to 200 (~4 s at 50 Hz). Increase if the robot needs more time.
+
+        Returns:
+            The latest observation after executing the home action.
+        """
+        action = self._home_action.copy()
+        if hasattr(self._arm_ctrl, "ctrl_dual_arm_go_home"):
+            try:
+                self._arm_ctrl.ctrl_dual_arm_go_home()
+            except Exception:
+                # fallback to time-based loop if controller call fails
+                obs = None
+                for _ in range(max(1, steps)):
+                    self._apply_action(action)
+                    time.sleep(self._action_dt)
+                    obs = self._compose_observation(self._read_robot_state())
+                if obs is None:
+                    obs = self._compose_observation(self._read_robot_state())
+            else:
+                obs = self._compose_observation(self._read_robot_state())
+        else:
+            obs = None
+            for _ in range(max(1, steps)):
+                self._apply_action(action)
+                time.sleep(self._action_dt)
+                obs = self._compose_observation(self._read_robot_state())
+            if obs is None:
+                obs = self._compose_observation(self._read_robot_state())
+
+        if self._has_dex3:
+            left = action[self._arm_dof : self._arm_dof + self._ee_dof]
+            right = action[self._arm_dof + self._ee_dof : self._arm_dof + 2 * self._ee_dof]
+            with self._ee_shared_mem["lock"]:
+                self._ee_shared_mem["left"][:] = left
+                self._ee_shared_mem["right"][:] = right
+                if "action" in self._ee_shared_mem:
+                    self._ee_shared_mem["action"][: self._ee_dof] = left
+                    self._ee_shared_mem["action"][self._ee_dof : 2 * self._ee_dof] = right
+
+        self._last_action = action
+        return obs
+
+    def get_home_action(self) -> np.ndarray:
+        """Return a copy of the all-zero home action (arm + hand joint targets)."""
+        return self._home_action.copy()
+
+    def get_initial_action(self) -> np.ndarray:
+        """Return the nominal initial action captured at environment construction."""
+        return self._initial_action.copy()
+
+    # ------------------------------------------------------------------ gym API
+    def reset(self, *, seed: Optional[int] = None, options: Optional[Dict] = None):
+        super().reset(seed=seed)
+        arm_home = self._initial_state.arm_position
+        tau = self._arm_ik.solve_tau(arm_home)
+        self._arm_ctrl.ctrl_dual_arm(arm_home, tau)
+
+        if self._has_dex3 and self._initial_state.hand_position.size:
+            left = self._initial_state.hand_position[: self._ee_dof]
+            right = self._initial_state.hand_position[self._ee_dof :]
+            with self._ee_shared_mem["lock"]:
+                self._ee_shared_mem["left"][:] = left
+                self._ee_shared_mem["right"][:] = right
+                if "action" in self._ee_shared_mem:
+                    self._ee_shared_mem["action"][: self._ee_dof] = left
+                    self._ee_shared_mem["action"][self._ee_dof : 2 * self._ee_dof] = right
+
+        time.sleep(self._action_dt)
+        obs = self._compose_observation(self._read_robot_state())
+        self._last_action = self._initial_action.copy()
+        info: Dict[str, float] = {}
+        return obs, info
+
+    def step(self, action: np.ndarray):
+        self._apply_action(action)
+        time.sleep(self._action_dt)
+        state = self._read_robot_state()
+        obs = self._compose_observation(state)
+        reward = 0.0
+        terminated = False
+        truncated = False
+        info: Dict[str, float] = {}
+        return obs, reward, terminated, truncated, info
+
+    def render(self):
+        return None
+
+    def close(self):
+        try:
+            self.go_home()
+        except Exception:
+            pass
+
+    # ------------------------------------------------------------------ public helpers
+    @property
+    def simulation_mode(self) -> bool:
+        """Return True when the environment is connected to the simulator DDS channel."""
+        return self._simulation_mode
+
+    # ------------------------------------------------------------------ controller hooks
+    def speed_gradual_max(self, duration: float = 5.0):
+        """Proxy to Unitree SDK speed ramp helper (if available)."""
+        if hasattr(self._arm_ctrl, "speed_gradual_max"):
+            self._arm_ctrl.speed_gradual_max(duration)
+
+    def speed_instant_max(self):
+        """Proxy to instantly unlock maximum arm velocity (if available)."""
+        if hasattr(self._arm_ctrl, "speed_instant_max"):
+            self._arm_ctrl.speed_instant_max()

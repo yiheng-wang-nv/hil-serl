@@ -37,7 +37,7 @@ HIL-SERL provides a set of libraries, env wrappers, and examples to train RL pol
 
     - For GPU:
         ```bash
-        pip install --upgrade "jax[cuda12_pip]==0.4.35" -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
+        pip install --upgrade "jax[cuda12_pip]==0.4.35" -i https://pypi.tuna.tsinghua.edu.cn/simple
         ```
 
     - For TPU
@@ -54,6 +54,8 @@ HIL-SERL provides a set of libraries, env wrappers, and examples to train RL pol
     ```
 
 4. **Install for serl_robot_infra** Follow the [README](./serl_robot_infra/README.md) in `serl_robot_infra` for installation and basic robot operation instructions. This contains the instruction for installing the impendence-based [serl_franka_controllers](https://github.com/rail-berkeley/serl_franka_controllers). After the installation, you should be able to run the robot server, interact with the gym `franka_env` (hardware).
+
+5. **Optional: Unitree G1 + Dex3 direct control** If you plan to train or evaluate policies on the Unitree stack, follow the steps in [docs/unitree_sdk2_direct.md](./docs/unitree_sdk2_direct.md) to install the SDK2 dependencies and expose the direct 28-DoF environment.
 
 ## Overview and Code Structure
 
@@ -105,4 +107,3 @@ If you use this code for your research, please cite our paper:
       primaryClass={cs.RO}
 }
 ```
-
